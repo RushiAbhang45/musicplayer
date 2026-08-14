@@ -29,6 +29,18 @@ function readRaw() {
 
 function writeRaw(playlists) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists));
+  listeners.forEach((fn) => fn());
+}
+
+// Lets components (TrackCard, PlayerBar, etc.) stay in sync when a track's
+// liked/playlist status changes somewhere else on the page - e.g. liking a
+// track from the player bar should update that same track's heart icon on
+// its TrackCard elsewhere on screen, not just in localStorage.
+const listeners = new Set();
+
+export function subscribeToPlaylistChanges(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
 }
 
 // One-time migration from the old flat "My Library" favorites list into the

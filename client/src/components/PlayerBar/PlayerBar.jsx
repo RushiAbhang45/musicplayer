@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { usePlayer } from "../../context/PlayerContext.jsx";
+import { isLiked, subscribeToPlaylistChanges, toggleLiked } from "../../utils/playlists.js";
 import ShareButton from "../ShareButton/ShareButton.jsx";
 import "./PlayerBar.css";
 
@@ -26,6 +28,22 @@ export default function PlayerBar() {
     setVolume,
     toggleAutoplay,
   } = usePlayer();
+
+  const [liked, setLiked] = useState(false);
+
+  useEffect(() => {
+    if (!currentTrack) {
+      setLiked(false);
+      return undefined;
+    }
+    setLiked(isLiked(currentTrack.videoId));
+    return subscribeToPlaylistChanges(() => setLiked(isLiked(currentTrack.videoId)));
+  }, [currentTrack]);
+
+  function handleToggleLiked() {
+    if (!currentTrack) return;
+    setLiked(toggleLiked(currentTrack));
+  }
 
   return (
     <div className="player-bar">
@@ -70,6 +88,16 @@ export default function PlayerBar() {
           <button onClick={next} disabled={!currentTrack} aria-label="Next">
             ⏭
           </button>
+          {currentTrack && (
+            <button
+              className={`icon-btn player-bar__like${liked ? " active" : ""}`}
+              onClick={handleToggleLiked}
+              aria-label={liked ? "Remove from Liked Songs" : "Save to Liked Songs"}
+              title={liked ? "Remove from Liked Songs" : "Save to Liked Songs"}
+            >
+              {liked ? "♥" : "♡"}
+            </button>
+          )}
           {currentTrack && (
             <ShareButton
               path={`/track/${currentTrack.videoId}`}

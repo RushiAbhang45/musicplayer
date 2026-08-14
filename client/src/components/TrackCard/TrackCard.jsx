@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { usePlayer } from "../../context/PlayerContext.jsx";
-import { isLiked, toggleLiked } from "../../utils/playlists.js";
+import { isLiked, subscribeToPlaylistChanges, toggleLiked } from "../../utils/playlists.js";
 import AddToPlaylistMenu from "../AddToPlaylistMenu/AddToPlaylistMenu.jsx";
 import AlbumArt from "../AlbumArt/AlbumArt.jsx";
 import "./TrackCard.css";
@@ -10,6 +10,11 @@ import "./TrackCard.css";
 export default function TrackCard({ track, queue, onRemoveFromPlaylist }) {
   const { playTrack, currentTrack, isPlaying } = usePlayer();
   const [liked, setLiked] = useState(() => isLiked(track.videoId));
+
+  useEffect(() => {
+    setLiked(isLiked(track.videoId));
+    return subscribeToPlaylistChanges(() => setLiked(isLiked(track.videoId)));
+  }, [track.videoId]);
 
   const isCurrent = currentTrack?.videoId === track.videoId;
 
