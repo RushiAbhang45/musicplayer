@@ -8,6 +8,7 @@ const searchRoute = require("./routes/search");
 const categoriesRoute = require("./routes/categories");
 const relatedRoute = require("./routes/related");
 const artistsRoute = require("./routes/artists");
+const trackRoute = require("./routes/track");
 const { startScheduledRefresh } = require("./services/cacheService");
 
 if (!process.env.YOUTUBE_API_KEY) {
@@ -36,6 +37,7 @@ app.use("/api/search", searchRoute);
 app.use("/api/categories", categoriesRoute);
 app.use("/api/related", relatedRoute);
 app.use("/api/artists", artistsRoute);
+app.use("/api/track", trackRoute);
 
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));

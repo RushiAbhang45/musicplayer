@@ -133,6 +133,9 @@ export function PlayerProvider({ children }) {
     [playerRef]
   );
 
+  const seekRef = useRef(seek);
+  seekRef.current = seek;
+
   const changeVolume = useCallback(
     (value) => {
       setVolume(value);
@@ -143,7 +146,49 @@ export function PlayerProvider({ children }) {
 
   const toggleAutoplay = useCallback(() => setAutoplay((v) => !v), []);
 
+  // Media Session API: shows track info + play/pause/skip controls on the
+  // lock screen / notification shade. Registered once (handlers reach the
+  // player directly via refs rather than depending on changing state), so
+  // this doesn't churn on every play/pause. How reliably the OS actually
+  // keeps audio alive in the background still depends on the platform -
+  // see README for the YouTube-iframe caveat, this is best-effort.
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return undefined;
+
+    navigator.mediaSession.setActionHandler("play", () => playerRef.current?.playVideo());
+    navigator.mediaSession.setActionHandler("pause", () => playerRef.current?.pauseVideo());
+    navigator.mediaSession.setActionHandler("previoustrack", () => goPrev());
+    navigator.mediaSession.setActionHandler("nexttrack", () => goNext());
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime != null) seekRef.current(details.seekTime);
+    });
+
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+      navigator.mediaSession.setActionHandler("seekto", null);
+    };
+  }, [playerRef, goPrev, goNext]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+  }, [isPlaying]);
+
   const currentTrack = currentIndex >= 0 ? queue[currentIndex] : null;
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !currentTrack) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.channelTitle,
+      artwork: currentTrack.thumbnail
+        ? [{ src: currentTrack.thumbnail, sizes: "480x360", type: "image/jpeg" }]
+        : [],
+    });
+  }, [currentTrack]);
 
   const value = {
     queue,

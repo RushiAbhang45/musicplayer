@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { describeApiError, fetchCategories, fetchCategoryTracks } from "../services/api.js";
 import TrackCard from "../components/TrackCard/TrackCard.jsx";
+import ShareButton from "../components/ShareButton/ShareButton.jsx";
 
 export default function Category() {
   const { id } = useParams();
@@ -26,15 +27,18 @@ export default function Category() {
 
   return (
     <div>
-      <h1 className="page-heading">
-        {category ? (
-          <>
-            <span aria-hidden="true">{category.icon}</span> {category.name}
-          </>
-        ) : (
-          "Playlist"
-        )}
-      </h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <h1 className="page-heading" style={{ marginBottom: 0 }}>
+          {category ? (
+            <>
+              <span aria-hidden="true">{category.icon}</span> {category.name}
+            </>
+          ) : (
+            "Playlist"
+          )}
+        </h1>
+        <ShareButton path={`/category/${id}`} label="Copy link to this playlist" />
+      </div>
 
       {status === "loading" && <p className="status-text">Loading tracks...</p>}
       {status === "error" && <p className="status-text">{errorMessage}</p>}

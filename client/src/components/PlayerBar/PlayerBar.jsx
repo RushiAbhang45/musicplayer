@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { usePlayer } from "../../context/PlayerContext.jsx";
+import ShareButton from "../ShareButton/ShareButton.jsx";
 import "./PlayerBar.css";
 
 function formatTime(seconds) {
@@ -69,6 +70,13 @@ export default function PlayerBar() {
           <button onClick={next} disabled={!currentTrack} aria-label="Next">
             ⏭
           </button>
+          {currentTrack && (
+            <ShareButton
+              path={`/track/${currentTrack.videoId}`}
+              label="Copy link to this track"
+              className="player-bar__share"
+            />
+          )}
         </div>
         <div className="player-bar__progress-row">
           <span>{formatTime(currentTime)}</span>

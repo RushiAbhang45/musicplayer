@@ -38,6 +38,11 @@ export async function fetchArtistTracks(channelId) {
   return data;
 }
 
+export async function fetchTrackInfo(videoId) {
+  const { data } = await api.get(`/track/${videoId}`);
+  return data;
+}
+
 // Turns a failed API call into a message worth showing the user - in
 // particular, distinguishes "YouTube's daily quota is exhausted" (expected,
 // resets on its own) from a generic failure.

@@ -9,6 +9,7 @@ import {
   renamePlaylist,
 } from "../utils/playlists.js";
 import TrackCard from "../components/TrackCard/TrackCard.jsx";
+import ShareButton from "../components/ShareButton/ShareButton.jsx";
 
 export default function PlaylistDetail() {
   const { id } = useParams();
@@ -116,6 +117,7 @@ export default function PlaylistDetail() {
               🗑
             </button>
           )}
+          <ShareButton path={`/playlist/${id}`} label="Copy link to this playlist" />
         </div>
       </div>
 

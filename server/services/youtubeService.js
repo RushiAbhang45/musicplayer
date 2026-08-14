@@ -104,6 +104,36 @@ async function getVideoDetails(videoId) {
   };
 }
 
+// Looks up a single video as a full normalized track (title/channel/
+// thumbnail/duration) - used for shareable /track/:videoId links, where we
+// only have a videoId and need everything needed to render a TrackCard and
+// start playback. Costs 1 quota unit (snippet + contentDetails in one call).
+async function getTrackById(videoId) {
+  const { data } = await axios.get(`${YOUTUBE_API_BASE}/videos`, {
+    params: {
+      key: getApiKey(),
+      part: "snippet,contentDetails",
+      id: videoId,
+    },
+  });
+
+  const item = data.items?.[0];
+  if (!item) return null;
+
+  return {
+    videoId,
+    title: decodeEntities(item.snippet.title),
+    channelId: item.snippet.channelId,
+    channelTitle: decodeEntities(item.snippet.channelTitle),
+    thumbnail:
+      item.snippet.thumbnails?.high?.url ||
+      item.snippet.thumbnails?.medium?.url ||
+      item.snippet.thumbnails?.default?.url ||
+      "",
+    duration: parseDuration(item.contentDetails?.duration),
+  };
+}
+
 // Looks up a channel's display info (used for the artist page header).
 // Costs 1 quota unit.
 async function getChannelInfo(channelId) {
@@ -130,4 +160,4 @@ async function getChannelInfo(channelId) {
   };
 }
 
-module.exports = { searchVideos, getVideoDetails, getChannelInfo };
+module.exports = { searchVideos, getVideoDetails, getTrackById, getChannelInfo };

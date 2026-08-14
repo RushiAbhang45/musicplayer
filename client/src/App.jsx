@@ -8,6 +8,7 @@ import Search from "./pages/Search.jsx";
 import Playlists from "./pages/Playlists.jsx";
 import PlaylistDetail from "./pages/PlaylistDetail.jsx";
 import Artist from "./pages/Artist.jsx";
+import TrackPage from "./pages/TrackPage.jsx";
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
             <Route path="/library" element={<Playlists />} />
             <Route path="/playlist/:id" element={<PlaylistDetail />} />
             <Route path="/artist/:channelId" element={<Artist />} />
+            <Route path="/track/:videoId" element={<TrackPage />} />
           </Routes>
         </main>
         <PlayerBar />

@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const NodeCache = require("node-cache");
 const categories = require("../config/categories");
-const { searchVideos, getVideoDetails, getChannelInfo } = require("./youtubeService");
+const { searchVideos, getVideoDetails, getTrackById, getChannelInfo } = require("./youtubeService");
 const { deriveArtist } = require("../utils/deriveArtist");
 
 // Category results are persisted to disk so a server restart (dev reloads,
@@ -28,6 +28,10 @@ const searchCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
 const relatedCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 300 });
 const artistTracksCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
 const artistInfoCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
+
+// Single-track lookups for shareable /track/:videoId links. Long TTL since a
+// video's title/channel/thumbnail essentially never change.
+const trackInfoCache = new NodeCache({ stdTTL: CATEGORY_TTL_SECONDS, maxKeys: 500 });
 
 async function fetchCategoryTracks(category) {
   const resultsByVideoId = new Map();
@@ -182,6 +186,18 @@ async function getArtistTracks(channelId) {
   return tracks;
 }
 
+// Powers shareable /track/:videoId links - given just a videoId (no search
+// context), fetches everything needed to render a TrackCard and start
+// playback.
+async function getTrackInfo(videoId) {
+  const cached = trackInfoCache.get(videoId);
+  if (cached) return cached;
+
+  const track = await getTrackById(videoId);
+  if (track) trackInfoCache.set(videoId, track);
+  return track;
+}
+
 async function getArtistInfo(channelId) {
   const cached = artistInfoCache.get(channelId);
   if (cached) return cached;
@@ -204,5 +220,6 @@ module.exports = {
   getRelatedTracks,
   getArtistTracks,
   getArtistInfo,
+  getTrackInfo,
   startScheduledRefresh,
 };
