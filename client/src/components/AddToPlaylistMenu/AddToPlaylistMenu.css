@@ -1,0 +1,111 @@
+.add-to-playlist__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 0, 12, 0.55);
+  backdrop-filter: blur(3px);
+  padding: 20px;
+}
+
+.add-to-playlist__panel {
+  width: 100%;
+  max-width: 280px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.add-to-playlist__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 6px;
+}
+
+.add-to-playlist__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.add-to-playlist__close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.add-to-playlist__close:hover {
+  color: var(--text-primary);
+}
+
+.add-to-playlist__list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-to-playlist__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  width: 100%;
+  text-align: left;
+}
+
+.add-to-playlist__item:hover {
+  background: var(--glass-bg);
+}
+
+.add-to-playlist__check {
+  color: var(--accent-cyan);
+  font-size: 13px;
+}
+
+.add-to-playlist__new {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.add-to-playlist__new input {
+  flex: 1;
+  min-width: 0;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.add-to-playlist__new button {
+  border: none;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--accent-gradient);
+  color: #0a0118;
+  cursor: pointer;
+}

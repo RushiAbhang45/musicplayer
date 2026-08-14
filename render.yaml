@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: musicplayer-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: CATEGORY_CACHE_TTL_HOURS
+        value: "12"
+      - key: SEARCH_CACHE_TTL_MINUTES
+        value: "60"
+      - key: CLIENT_ORIGIN
+        sync: false

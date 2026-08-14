@@ -1,0 +1,32 @@
+.category-card {
+  position: relative;
+  padding: 22px 18px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.category-card__glow {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  transition: opacity 0.25s ease;
+}
+
+.category-card:hover .category-card__glow {
+  opacity: 0.32;
+}
+
+.category-card__icon {
+  font-size: 26px;
+}
+
+.category-card__name {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 16px;
+  z-index: 1;
+}

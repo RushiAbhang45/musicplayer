@@ -1,0 +1,181 @@
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
+import { fetchRelatedTracks } from "../services/api.js";
+
+const PlayerContext = createContext(null);
+const YT_PLAYER_CONTAINER_ID = "yt-player-mount";
+
+// Mounted once, above the router, so the single YT.Player instance is never
+// torn down on navigation - that's what makes playback survive page changes.
+export function PlayerProvider({ children }) {
+  const [queue, setQueue] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(80);
+  const [autoplay, setAutoplay] = useState(true);
+  const [isFetchingRelated, setIsFetchingRelated] = useState(false);
+
+  const queueRef = useRef([]);
+  const indexRef = useRef(-1);
+  const autoplayRef = useRef(autoplay);
+  queueRef.current = queue;
+  indexRef.current = currentIndex;
+  autoplayRef.current = autoplay;
+
+  const loadAt = useCallback((list, index) => {
+    const track = list[index];
+    const player = playerRef.current;
+    if (!track || !player) return;
+    setQueue(list);
+    setCurrentIndex(index);
+    setCurrentTime(0);
+    player.loadVideoById(track.videoId);
+  }, []);
+
+  const goNext = useCallback(async () => {
+    const list = queueRef.current;
+    const idx = indexRef.current;
+
+    if (idx + 1 < list.length) {
+      loadAt(list, idx + 1);
+      return;
+    }
+
+    if (!autoplayRef.current) return;
+    const current = list[idx];
+    if (!current) return;
+
+    setIsFetchingRelated(true);
+    try {
+      const related = await fetchRelatedTracks(current.videoId);
+      const existingIds = new Set(list.map((t) => t.videoId));
+      const fresh = related.filter((t) => !existingIds.has(t.videoId));
+      if (fresh.length === 0) return;
+      loadAt([...list, ...fresh], idx + 1);
+    } catch {
+      // no related tracks available - just stop, nothing more to play
+    } finally {
+      setIsFetchingRelated(false);
+    }
+  }, [loadAt]);
+
+  const goPrev = useCallback(() => {
+    const list = queueRef.current;
+    const idx = indexRef.current;
+    if (idx > 0) loadAt(list, idx - 1);
+  }, [loadAt]);
+
+  const handleStateChange = useCallback(
+    (event) => {
+      const YT = window.YT;
+      if (!YT) return;
+      if (event.data === YT.PlayerState.PLAYING) {
+        setIsPlaying(true);
+        setDuration(event.target.getDuration() || 0);
+      } else if (event.data === YT.PlayerState.PAUSED) {
+        setIsPlaying(false);
+      } else if (event.data === YT.PlayerState.ENDED) {
+        setIsPlaying(false);
+        goNext();
+      }
+    },
+    [goNext]
+  );
+
+  const { playerRef, isReady } = useYouTubePlayer(YT_PLAYER_CONTAINER_ID, {
+    onStateChange: handleStateChange,
+  });
+
+  useEffect(() => {
+    if (isReady) playerRef.current?.setVolume(volume);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady]);
+
+  useEffect(() => {
+    if (!isPlaying) return undefined;
+    const id = setInterval(() => {
+      const player = playerRef.current;
+      if (player?.getCurrentTime) setCurrentTime(player.getCurrentTime());
+    }, 500);
+    return () => clearInterval(id);
+  }, [isPlaying, playerRef]);
+
+  const playTrack = useCallback(
+    (track, list) => {
+      const player = playerRef.current;
+      if (!player) return;
+      const effectiveList = list && list.length ? list : [track];
+      const index = effectiveList.findIndex((t) => t.videoId === track.videoId);
+      loadAt(effectiveList, index === -1 ? 0 : index);
+      player.playVideo();
+      setIsPlaying(true);
+    },
+    [loadAt, playerRef]
+  );
+
+  const togglePlay = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    if (isPlaying) {
+      player.pauseVideo();
+    } else {
+      player.playVideo();
+    }
+  }, [playerRef, isPlaying]);
+
+  const seek = useCallback(
+    (seconds) => {
+      playerRef.current?.seekTo(seconds, true);
+      setCurrentTime(seconds);
+    },
+    [playerRef]
+  );
+
+  const changeVolume = useCallback(
+    (value) => {
+      setVolume(value);
+      playerRef.current?.setVolume(value);
+    },
+    [playerRef]
+  );
+
+  const toggleAutoplay = useCallback(() => setAutoplay((v) => !v), []);
+
+  const currentTrack = currentIndex >= 0 ? queue[currentIndex] : null;
+
+  const value = {
+    queue,
+    currentTrack,
+    isPlaying,
+    isReady,
+    currentTime,
+    duration,
+    volume,
+    autoplay,
+    isFetchingRelated,
+    playTrack,
+    togglePlay,
+    next: goNext,
+    prev: goPrev,
+    seek,
+    setVolume: changeVolume,
+    toggleAutoplay,
+  };
+
+  return (
+    <PlayerContext.Provider value={value}>
+      {children}
+      <div className="yt-player-mount" aria-hidden="true">
+        <div id={YT_PLAYER_CONTAINER_ID} />
+      </div>
+    </PlayerContext.Provider>
+  );
+}
+
+export function usePlayer() {
+  const ctx = useContext(PlayerContext);
+  if (!ctx) throw new Error("usePlayer must be used within a PlayerProvider");
+  return ctx;
+}
