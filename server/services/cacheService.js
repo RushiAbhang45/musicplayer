@@ -207,10 +207,16 @@ async function getArtistInfo(channelId) {
   return info;
 }
 
+// Warms from disk if a fresh-enough cache exists (cheap, no API calls), but
+// deliberately does NOT eagerly fetch all 10 categories on startup when it
+// doesn't - that "always fetch everything on boot" pattern is what burns
+// ~1,000 quota units every time a free-tier host (Render, etc.) spins back
+// up from a cold start, even with zero real visitors. Categories the disk
+// cache doesn't cover just populate lazily via getCategoryTracks's normal
+// cache-miss path the first time someone actually visits them - one
+// category (100 units), not ten, and only for categories people look at.
 function startScheduledRefresh() {
-  if (!loadCategoriesFromDisk()) {
-    refreshAllCategories();
-  }
+  loadCategoriesFromDisk();
   setInterval(refreshAllCategories, CATEGORY_TTL_SECONDS * 1000);
 }
 
