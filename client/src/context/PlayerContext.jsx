@@ -20,6 +20,7 @@ export function PlayerProvider({ children }) {
   const queueRef = useRef([]);
   const indexRef = useRef(-1);
   const autoplayRef = useRef(autoplay);
+  const wakeLockRef = useRef(null);
   queueRef.current = queue;
   indexRef.current = currentIndex;
   autoplayRef.current = autoplay;
@@ -175,6 +176,47 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+  }, [isPlaying]);
+
+  // Screen Wake Lock: keeps the screen from auto-locking (idle timeout)
+  // while music is playing, since YouTube's iframe player gets suspended
+  // the moment the screen actually locks - see README for why we can't
+  // reliably survive an *intentional* lock (power button) without ripping
+  // audio out of YouTube's player, which we won't do. This only covers the
+  // far more common "walked away and the phone timed out" case. Doesn't
+  // block the physical lock button; not supported on every browser.
+  useEffect(() => {
+    if (!("wakeLock" in navigator)) return undefined;
+    let cancelled = false;
+
+    async function acquireWakeLock() {
+      try {
+        const lock = await navigator.wakeLock.request("screen");
+        if (cancelled) {
+          lock.release().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = lock;
+      } catch {
+        // refused (e.g. low battery mode, no user gesture yet) - fine
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (isPlaying && document.visibilityState === "visible" && !wakeLockRef.current) {
+        acquireWakeLock();
+      }
+    }
+
+    if (isPlaying) acquireWakeLock();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+    };
   }, [isPlaying]);
 
   const currentTrack = currentIndex >= 0 ? queue[currentIndex] : null;

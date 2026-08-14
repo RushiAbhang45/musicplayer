@@ -6,6 +6,8 @@ A curated music discovery website: browse "hits" playlists (Sufi & Romance, Love
 
 This app **streams audio via YouTube's official IFrame Player API** — the same embedded player YouTube provides for any site. It does **not** extract, download, rip, or convert audio to MP3 anywhere, on the client or the server. That approach (common on "YouTube to MP3" sites) is copyright infringement and a violation of YouTube's Terms of Service, and is intentionally not part of this project. "Save to My Library" only stores the song's YouTube video ID and metadata (title, thumbnail, channel) in your browser — playback always streams live from YouTube.
 
+**Lock-screen / background playback:** the app sets up Media Session metadata (lock-screen title/artist/artwork/controls) and uses the Screen Wake Lock API to stop the screen from auto-locking from idle timeout while a song plays. It cannot guarantee playback survives an *intentional* screen lock (pressing the power button) on every device — iOS Safari and, less consistently, Android Chrome suspend background video in third-party iframes like YouTube's embed once the screen actually locks, regardless of PWA install status. This is a platform-level restriction on embedded video, not something fixable in app code, and it affects every site that embeds YouTube this way. The only way around it is extracting YouTube's audio (which this project deliberately does not do) or switching to a licensed streaming API (Spotify/Apple Music), which was intentionally not pursued to keep this free and avoid requiring a paid subscription.
+
 ## Project structure
 
 ```
