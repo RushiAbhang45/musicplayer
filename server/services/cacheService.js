@@ -205,6 +205,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
     categoryCache,
     relatedCache,
     artistTracksCache,
+    trendingCache,
     categoryId,
     excludeIds: excludeSet,
     limit: RELATED_RESULT_COUNT,

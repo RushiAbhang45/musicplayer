@@ -18,25 +18,35 @@ function shuffle(list) {
 // already paid quota for, instead of always issuing a fresh 100-unit search.
 // When the source track's categoryId is known, the pool is just that
 // category's cached tracks (real genre match). Otherwise it falls back to
-// every currently-cached category combined - still curated/genre-flavored,
-// just not narrowed to one. A small slice of whatever's sitting in
-// relatedCache/artistTracksCache is mixed in too, for extra variety beyond
-// the 10 fixed categories.
+// every currently-cached category combined, PLUS the trending chart -
+// crucially, trending is fetched the moment anyone loads the homepage (1
+// quota unit, already always warm), whereas category caches only fill up
+// once someone actually clicks into a category tile. Without trending as a
+// fallback source, a fresh deploy - or a listener who only ever uses search,
+// never a curated category - would find every cache empty on their first
+// few plays and silently fall through to the old same-artist search every
+// time. A small slice of whatever's sitting in relatedCache/artistTracksCache
+// is mixed in too, for extra variety beyond the 10 fixed categories.
 function samplePool({
   categoryCache,
   relatedCache,
   artistTracksCache,
+  trendingCache,
   categoryId,
   excludeIds,
   limit = RELATED_RESULT_COUNT,
 }) {
+  const trendingTracks = trendingCache?.get("trending") || [];
   const known = categoryId ? categoryCache.get(categoryId) : null;
   const basePool =
-    known && known.length ? known : categories.flatMap((c) => categoryCache.get(c.id) || []);
+    known && known.length
+      ? known
+      : [...categories.flatMap((c) => categoryCache.get(c.id) || []), ...trendingTracks];
 
   const bonus = [
     ...relatedCache.keys().flatMap((key) => relatedCache.get(key) || []),
     ...artistTracksCache.keys().flatMap((key) => artistTracksCache.get(key) || []),
+    ...(known && known.length ? trendingTracks : []),
   ].slice(0, 20);
 
   const byVideoId = new Map();
