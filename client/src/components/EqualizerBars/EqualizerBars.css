@@ -1,0 +1,36 @@
+.eq-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 16px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.eq-bar {
+  flex: 1;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-gradient);
+  transform: scaleY(0.15);
+  transform-origin: bottom;
+  opacity: 0.5;
+}
+
+.eq-bars.is-playing .eq-bar {
+  opacity: 1;
+  animation: equalizer-bounce 0.9s ease-in-out infinite;
+}
+
+.eq-bars.is-playing .eq-bar:nth-child(1) {
+  animation-delay: -0.6s;
+}
+.eq-bars.is-playing .eq-bar:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.eq-bars.is-playing .eq-bar:nth-child(3) {
+  animation-delay: -0.75s;
+}
+.eq-bars.is-playing .eq-bar:nth-child(4) {
+  animation-delay: -0.15s;
+}

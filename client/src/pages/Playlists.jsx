@@ -1,11 +1,21 @@
-import { useState } from "react";
-import { createPlaylist, getPlaylists } from "../utils/playlists.js";
+import { useEffect, useState } from "react";
+import {
+  createPlaylist,
+  getPlaylists,
+  isPlaylistsLoading,
+  subscribeToPlaylistChanges,
+} from "../utils/playlists.js";
 import PlaylistCard from "../components/PlaylistCard/PlaylistCard.jsx";
 
 export default function Playlists() {
   const [playlists, setPlaylists] = useState(() => getPlaylists());
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+
+  useEffect(() => {
+    setPlaylists(getPlaylists());
+    return subscribeToPlaylistChanges(() => setPlaylists(getPlaylists()));
+  }, []);
 
   function handleCreate(e) {
     e.preventDefault();
@@ -57,11 +67,15 @@ export default function Playlists() {
         )}
       </div>
 
-      <div className="grid">
-        {playlists.map((playlist) => (
-          <PlaylistCard key={playlist.id} playlist={playlist} />
-        ))}
-      </div>
+      {isPlaylistsLoading() ? (
+        <p className="status-text">Loading your library...</p>
+      ) : (
+        <div className="grid">
+          {playlists.map((playlist) => (
+            <PlaylistCard key={playlist.id} playlist={playlist} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

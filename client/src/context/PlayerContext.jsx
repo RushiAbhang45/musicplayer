@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
-import { fetchRelatedTracks } from "../services/api.js";
+import { fetchRelatedTracks, recordServerPlay } from "../services/api.js";
+import { recordPlay } from "../utils/recentlyPlayed.js";
 
 const PlayerContext = createContext(null);
 const YT_PLAYER_CONTAINER_ID = "yt-player-mount";
@@ -50,7 +51,10 @@ export function PlayerProvider({ children }) {
 
     setIsFetchingRelated(true);
     try {
-      const related = await fetchRelatedTracks(current.videoId);
+      const related = await fetchRelatedTracks(current.videoId, {
+        categoryId: current.categoryId,
+        excludeIds: list.map((t) => t.videoId),
+      });
       const existingIds = new Set(list.map((t) => t.videoId));
       const fresh = related.filter((t) => !existingIds.has(t.videoId));
       if (fresh.length === 0) return;
@@ -112,6 +116,12 @@ export function PlayerProvider({ children }) {
       loadAt(effectiveList, index === -1 ? 0 : index);
       player.playVideo();
       setIsPlaying(true);
+      recordPlay(track);
+      // Fire-and-forget: a 401 (guest) or 503 (accounts disabled on this
+      // deployment) is expected and silently ignored. PlayerContext never
+      // imports AuthContext - this keeps the two decoupled instead of
+      // depending on provider ordering.
+      recordServerPlay(track).catch(() => {});
     },
     [loadAt, playerRef]
   );

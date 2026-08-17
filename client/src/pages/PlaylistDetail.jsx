@@ -5,8 +5,10 @@ import {
   LIKED_PLAYLIST_ID,
   deletePlaylist,
   getPlaylist,
+  isPlaylistsLoading,
   removeTrackFromPlaylist,
   renamePlaylist,
+  subscribeToPlaylistChanges,
 } from "../utils/playlists.js";
 import TrackCard from "../components/TrackCard/TrackCard.jsx";
 import ShareButton from "../components/ShareButton/ShareButton.jsx";
@@ -21,6 +23,7 @@ export default function PlaylistDetail() {
 
   useEffect(() => {
     setPlaylist(getPlaylist(id));
+    return subscribeToPlaylistChanges(() => setPlaylist(getPlaylist(id)));
   }, [id]);
 
   function refresh() {
@@ -55,6 +58,13 @@ export default function PlaylistDetail() {
   }
 
   if (!playlist) {
+    if (isPlaylistsLoading()) {
+      return (
+        <div>
+          <p className="status-text">Loading your library...</p>
+        </div>
+      );
+    }
     return (
       <div>
         <p className="empty-state">Playlist not found.</p>

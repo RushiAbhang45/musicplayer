@@ -1,8 +1,11 @@
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext.jsx";
 import SearchBar from "../SearchBar/SearchBar.jsx";
 import "./Header.css";
 
 export default function Header() {
+  const { user, accountsEnabled, logout } = useAuth();
+
   return (
     <header className="site-header">
       <NavLink to="/" className="site-header__logo gradient-text">
@@ -19,6 +22,22 @@ export default function Header() {
       <div className="site-header__search">
         <SearchBar />
       </div>
+      {accountsEnabled && (
+        <div className="site-header__account">
+          {user ? (
+            <>
+              <span className="site-header__email">{user.email}</span>
+              <button className="btn" onClick={logout}>
+                Log out
+              </button>
+            </>
+          ) : (
+            <NavLink to="/login" className="btn btn-primary">
+              Log in
+            </NavLink>
+          )}
+        </div>
+      )}
     </header>
   );
 }

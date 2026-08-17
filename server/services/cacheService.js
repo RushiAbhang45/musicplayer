@@ -2,18 +2,24 @@ const fs = require("fs");
 const path = require("path");
 const NodeCache = require("node-cache");
 const categories = require("../config/categories");
-const { searchVideos, getVideoDetails, getTrackById, getChannelInfo } = require("./youtubeService");
+const { searchVideos, getVideoDetails, getTrackById, getChannelInfo, getTrendingVideos } = require("./youtubeService");
 const { deriveArtist } = require("../utils/deriveArtist");
+const { samplePool, POOL_MIN_UNSEEN, RELATED_RESULT_COUNT } = require("./relatedPool");
 
-// Category results are persisted to disk so a server restart (dev reloads,
-// Render waking from sleep, redeploys) reuses the last fetch instead of
-// re-spending ~1,000 quota units re-fetching all 10 categories every time.
-const CACHE_FILE = path.join(__dirname, "..", ".cache", "categories.json");
+const CACHE_DIR = path.join(__dirname, "..", ".cache");
+
+// Bumped whenever the persisted shape changes in a way older files can't be
+// read as-is (e.g. category tracks gaining a `categoryId` field) - a
+// mismatched/missing version is discarded rather than reshaped, which costs
+// one clean re-fetch instead of silently serving stale-shaped data forever.
+const DISK_FORMAT_VERSION = 2;
 
 const CATEGORY_TTL_SECONDS =
   (Number(process.env.CATEGORY_CACHE_TTL_HOURS) || 12) * 3600;
 const SEARCH_TTL_SECONDS =
   (Number(process.env.SEARCH_CACHE_TTL_MINUTES) || 60) * 60;
+const TRENDING_TTL_SECONDS =
+  (Number(process.env.TRENDING_CACHE_TTL_HOURS) || 6) * 3600;
 
 // Curated category playlists: long TTL, warmed on startup so no visitor
 // ever waits on a live YouTube call for the homepage.
@@ -23,15 +29,98 @@ const categoryCache = new NodeCache({ stdTTL: CATEGORY_TTL_SECONDS });
 // identical queries across visitors don't re-spend YouTube API quota.
 const searchCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
 
-// "Related songs" (autoplay/radio) results, keyed by the video they were
-// derived from; and artist/channel browsing results.
+// "Related songs" (autoplay/radio) fallback results - keyed by category or
+// artist (see relatedPool.js / getRelatedTracks), not by source videoId, so
+// the same fallback is reusable across every track that maps to it; and
+// artist/channel browsing results.
 const relatedCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 300 });
 const artistTracksCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
 const artistInfoCache = new NodeCache({ stdTTL: SEARCH_TTL_SECONDS, maxKeys: 200 });
 
 // Single-track lookups for shareable /track/:videoId links. Long TTL since a
-// video's title/channel/thumbnail essentially never change.
+// video's title/channel/thumbnail essentially never change. Not disk-backed
+// (see makeDiskBackedCache callers below) - cheap to rebuild, low value.
 const trackInfoCache = new NodeCache({ stdTTL: CATEGORY_TTL_SECONDS, maxKeys: 500 });
+
+// Trending chart: same long-ish TTL story as categories, disk-backed.
+const trendingCache = new NodeCache({ stdTTL: TRENDING_TTL_SECONDS });
+
+// Generic disk snapshot for a node-cache instance, keyed by whatever keys
+// happen to be in the cache (category id, search query, channelId, etc).
+// Used so a server restart (dev reload, Render cold start/redeploy) reuses
+// what was already fetched instead of re-spending quota for data that's
+// still within its TTL.
+function makeDiskBackedCache({ file, cache, ttlSeconds }) {
+  function persist() {
+    const keys = cache.keys();
+    if (keys.length === 0) return;
+    const data = cache.mget(keys);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ formatVersion: DISK_FORMAT_VERSION, savedAt: Date.now(), data })
+      );
+    } catch (err) {
+      console.warn(`[cache] failed to persist ${path.basename(file)}:`, err.message);
+    }
+  }
+
+  // Returns true if it loaded something (so the caller can skip a startup
+  // refresh entirely for the cache that owns this file).
+  function load() {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+    } catch {
+      return false;
+    }
+
+    if (parsed.formatVersion !== DISK_FORMAT_VERSION) return false;
+
+    const age = Date.now() - (parsed.savedAt || 0);
+    if (age >= ttlSeconds * 1000) return false;
+
+    const entries = Object.entries(parsed.data || {});
+    for (const [key, value] of entries) {
+      cache.set(key, value);
+    }
+    console.log(
+      `[cache] loaded ${entries.length} entries from disk for ${path.basename(file)} (${Math.round(
+        age / 60000
+      )}m old)`
+    );
+    return true;
+  }
+
+  return { persist, load };
+}
+
+const categoryDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "categories.json"),
+  cache: categoryCache,
+  ttlSeconds: CATEGORY_TTL_SECONDS,
+});
+const relatedDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "related.json"),
+  cache: relatedCache,
+  ttlSeconds: SEARCH_TTL_SECONDS,
+});
+const artistTracksDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "artist-tracks.json"),
+  cache: artistTracksCache,
+  ttlSeconds: SEARCH_TTL_SECONDS,
+});
+const artistInfoDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "artist-info.json"),
+  cache: artistInfoCache,
+  ttlSeconds: SEARCH_TTL_SECONDS,
+});
+const trendingDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "trending.json"),
+  cache: trendingCache,
+  ttlSeconds: TRENDING_TTL_SECONDS,
+});
 
 async function fetchCategoryTracks(category) {
   const resultsByVideoId = new Map();
@@ -39,7 +128,9 @@ async function fetchCategoryTracks(category) {
     const tracks = await searchVideos(query, { maxResults: 12, musicOnly: true });
     for (const track of tracks) {
       if (!resultsByVideoId.has(track.videoId)) {
-        resultsByVideoId.set(track.videoId, track);
+        // categoryId is what lets the related-tracks pool sampler (see
+        // relatedPool.js) group cached tracks by genre/vibe.
+        resultsByVideoId.set(track.videoId, { ...track, categoryId: category.id });
       }
     }
   }
@@ -60,50 +151,7 @@ async function refreshAllCategories() {
   for (const category of categories) {
     await refreshCategory(category);
   }
-  persistCategoriesToDisk();
-}
-
-function persistCategoriesToDisk() {
-  const data = {};
-  for (const category of categories) {
-    const tracks = categoryCache.get(category.id);
-    if (tracks) data[category.id] = tracks;
-  }
-  // Don't persist an all-empty result (e.g. quota exhausted mid-refresh) -
-  // that would make a future restart wrongly skip a refresh it could
-  // actually complete, hiding empty categories for a full TTL window.
-  if (Object.keys(data).length === 0) return;
-  try {
-    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify({ savedAt: Date.now(), data }));
-  } catch (err) {
-    console.warn("[cache] failed to persist category cache to disk:", err.message);
-  }
-}
-
-// Loads a previously-persisted cache from disk if it's still within the TTL
-// window. Returns true if it loaded something (so the caller can skip the
-// live-fetch startup refresh entirely).
-function loadCategoriesFromDisk() {
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
-  } catch {
-    return false;
-  }
-
-  const age = Date.now() - (parsed.savedAt || 0);
-  if (age >= CATEGORY_TTL_SECONDS * 1000) return false;
-
-  for (const [categoryId, tracks] of Object.entries(parsed.data || {})) {
-    categoryCache.set(categoryId, tracks);
-  }
-  console.log(
-    `[cache] loaded ${Object.keys(parsed.data || {}).length} categories from disk (${Math.round(
-      age / 60000
-    )}m old) - skipping startup refresh`
-  );
-  return true;
+  categoryDisk.persist();
 }
 
 async function getCategoryTracks(categoryId) {
@@ -119,7 +167,7 @@ async function getCategoryTracks(categoryId) {
   console.log(`[cache] miss for category "${categoryId}" - fetching from YouTube`);
   const tracks = await fetchCategoryTracks(category);
   categoryCache.set(categoryId, tracks);
-  persistCategoriesToDisk();
+  categoryDisk.persist();
   return tracks;
 }
 
@@ -142,31 +190,79 @@ async function getSearchResults(query) {
   return tracks;
 }
 
-// Derives an artist guess from the current track (see utils/deriveArtist)
-// and searches for more songs from them - this is what powers "autoplay
-// similar songs" once a queue runs out. Falls back to other uploads from
-// the same channel when the title doesn't parse into a confident artist.
-async function getRelatedTracks(videoId) {
-  const cached = relatedCache.get(videoId);
-  if (cached) {
-    console.log(`[cache] hit for related "${videoId}"`);
-    return cached;
+// Builds the "up next" queue once a listener's queue runs dry. Prefers
+// sampling tracks the server already paid quota for (same category when
+// known, otherwise a pool spanning every cached category) - this is what
+// gives cross-artist variety within the same genre AND costs ~0 quota in
+// the common case, instead of the old "always search '<artist> songs'"
+// approach that both (a) spent 100 units on every single queue refill and
+// (b) only ever surfaced the one artist. A live search only happens when
+// the local pool is too thin to be worth serving.
+async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } = {}) {
+  const excludeSet = new Set([videoId, ...excludeIds]);
+
+  const pool = samplePool({
+    categoryCache,
+    relatedCache,
+    artistTracksCache,
+    categoryId,
+    excludeIds: excludeSet,
+    limit: RELATED_RESULT_COUNT,
+  });
+
+  if (pool.length >= POOL_MIN_UNSEEN) {
+    console.log(`[related] served ${pool.length} tracks from local pool for "${videoId}" (0 quota)`);
+    return pool;
   }
 
-  console.log(`[cache] miss for related "${videoId}" - deriving from YouTube`);
-  const video = await getVideoDetails(videoId);
-  if (!video) return [];
+  console.log(
+    `[related] local pool too thin (${pool.length}/${POOL_MIN_UNSEEN}) for "${videoId}" - falling back to a live search`
+  );
 
-  const { artist, confident } = deriveArtist(video.title, video.channelTitle);
+  const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
 
-  const tracks =
-    confident && artist
-      ? await searchVideos(`${artist} songs`, { maxResults: 16, musicOnly: true })
-      : await searchVideos(null, { maxResults: 16, musicOnly: true, channelId: video.channelId });
+  let fallbackKey;
+  let query = null;
+  let channelId = null;
 
-  const related = tracks.filter((t) => t.videoId !== videoId).slice(0, 12);
-  relatedCache.set(videoId, related);
-  return related;
+  if (category) {
+    // Broadened genre/mood query instead of a specific artist - reusable
+    // across every track from this category, unlike the old per-videoId key.
+    fallbackKey = `category:${category.id}`;
+    query = category.queries[0];
+  } else {
+    const video = await getVideoDetails(videoId);
+    if (!video) return pool;
+
+    const { artist, confident } = deriveArtist(video.title, video.channelTitle);
+    if (confident && artist) {
+      fallbackKey = `artist:${artist.toLowerCase()}`;
+      query = `${artist} songs`;
+    } else {
+      fallbackKey = `channel:${video.channelId}`;
+      channelId = video.channelId;
+    }
+  }
+
+  let fallbackTracks = relatedCache.get(fallbackKey);
+  if (!fallbackTracks) {
+    fallbackTracks = await searchVideos(query, { maxResults: 16, musicOnly: true, channelId });
+    relatedCache.set(fallbackKey, fallbackTracks);
+    relatedDisk.persist();
+  } else {
+    console.log(`[related] fallback cache hit for "${fallbackKey}"`);
+  }
+
+  const merged = pool.slice();
+  const seen = new Set(merged.map((t) => t.videoId));
+  for (const track of fallbackTracks) {
+    if (excludeSet.has(track.videoId) || seen.has(track.videoId)) continue;
+    merged.push(track);
+    seen.add(track.videoId);
+    if (merged.length >= RELATED_RESULT_COUNT) break;
+  }
+
+  return merged;
 }
 
 async function getArtistTracks(channelId) {
@@ -183,6 +279,7 @@ async function getArtistTracks(channelId) {
     order: "date",
   });
   artistTracksCache.set(channelId, tracks);
+  artistTracksDisk.persist();
   return tracks;
 }
 
@@ -203,11 +300,31 @@ async function getArtistInfo(channelId) {
   if (cached) return cached;
 
   const info = await getChannelInfo(channelId);
-  if (info) artistInfoCache.set(channelId, info);
+  if (info) {
+    artistInfoCache.set(channelId, info);
+    artistInfoDisk.persist();
+  }
   return info;
 }
 
-// Warms from disk if a fresh-enough cache exists (cheap, no API calls), but
+// YouTube's mostPopular chart - 1 quota unit regardless of result count,
+// vs. 100 for a search.list call. Long-ish TTL, disk-backed like categories.
+async function getTrending() {
+  const cached = trendingCache.get("trending");
+  if (cached) {
+    console.log("[cache] hit for trending");
+    return cached;
+  }
+
+  console.log("[cache] miss for trending - fetching from YouTube");
+  const regionCode = process.env.TRENDING_REGION || "IN";
+  const tracks = await getTrendingVideos({ regionCode });
+  trendingCache.set("trending", tracks);
+  trendingDisk.persist();
+  return tracks;
+}
+
+// Warms from disk if fresh-enough snapshots exist (cheap, no API calls), but
 // deliberately does NOT eagerly fetch all 10 categories on startup when it
 // doesn't - that "always fetch everything on boot" pattern is what burns
 // ~1,000 quota units every time a free-tier host (Render, etc.) spins back
@@ -216,7 +333,11 @@ async function getArtistInfo(channelId) {
 // cache-miss path the first time someone actually visits them - one
 // category (100 units), not ten, and only for categories people look at.
 function startScheduledRefresh() {
-  loadCategoriesFromDisk();
+  categoryDisk.load();
+  relatedDisk.load();
+  artistTracksDisk.load();
+  artistInfoDisk.load();
+  trendingDisk.load();
   setInterval(refreshAllCategories, CATEGORY_TTL_SECONDS * 1000);
 }
 
@@ -227,5 +348,6 @@ module.exports = {
   getArtistTracks,
   getArtistInfo,
   getTrackInfo,
+  getTrending,
   startScheduledRefresh,
 };

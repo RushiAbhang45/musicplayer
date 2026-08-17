@@ -134,6 +134,39 @@ async function getTrackById(videoId) {
   };
 }
 
+function normalizeChartItem(item) {
+  return {
+    videoId: item.id, // videos.list items key by plain id, unlike search.list's item.id.videoId
+    title: decodeEntities(item.snippet.title),
+    channelId: item.snippet.channelId,
+    channelTitle: decodeEntities(item.snippet.channelTitle),
+    thumbnail:
+      item.snippet.thumbnails?.high?.url ||
+      item.snippet.thumbnails?.medium?.url ||
+      item.snippet.thumbnails?.default?.url ||
+      "",
+    duration: parseDuration(item.contentDetails?.duration),
+  };
+}
+
+// YouTube's trending chart (Music category) - a single videos.list call
+// with snippet+contentDetails together, so it costs just 1 quota unit
+// total (no separate fetchDurations round-trip needed, unlike searchVideos).
+async function getTrendingVideos({ regionCode = "IN", maxResults = 25 } = {}) {
+  const { data } = await axios.get(`${YOUTUBE_API_BASE}/videos`, {
+    params: {
+      key: getApiKey(),
+      part: "snippet,contentDetails",
+      chart: "mostPopular",
+      videoCategoryId: MUSIC_CATEGORY_ID,
+      regionCode,
+      maxResults,
+    },
+  });
+
+  return (data.items || []).map(normalizeChartItem);
+}
+
 // Looks up a channel's display info (used for the artist page header).
 // Costs 1 quota unit.
 async function getChannelInfo(channelId) {
@@ -160,4 +193,4 @@ async function getChannelInfo(channelId) {
   };
 }
 
-module.exports = { searchVideos, getVideoDetails, getTrackById, getChannelInfo };
+module.exports = { searchVideos, getVideoDetails, getTrackById, getChannelInfo, getTrendingVideos };

@@ -6,7 +6,10 @@ import axios from "axios";
 // https://musicplayer-server.onrender.com/api
 const baseURL = import.meta.env.VITE_API_BASE_URL || "/api";
 
-const api = axios.create({ baseURL });
+// withCredentials is required so the auth cookie (see server/middleware/
+// requireAuth.js) is sent/received - harmless for guests, the cookie simply
+// won't exist yet.
+const api = axios.create({ baseURL, withCredentials: true });
 
 export async function fetchCategories() {
   const { data } = await api.get("/categories");
@@ -23,8 +26,87 @@ export async function searchTracks(query, limit) {
   return data;
 }
 
-export async function fetchRelatedTracks(videoId) {
-  const { data } = await api.get(`/related/${videoId}`);
+export async function fetchRelatedTracks(videoId, { categoryId, excludeIds } = {}) {
+  const { data } = await api.get(`/related/${videoId}`, {
+    params: {
+      categoryId: categoryId || undefined,
+      exclude: excludeIds?.length ? excludeIds.join(",") : undefined,
+    },
+  });
+  return data;
+}
+
+export async function fetchTrending() {
+  const { data } = await api.get("/trending");
+  return data;
+}
+
+// --- Accounts (optional - see AuthContext.jsx; a 503 accounts_disabled
+// means the deployment has no DATABASE_URL configured) ---
+
+export async function signup(email, password) {
+  const { data } = await api.post("/auth/signup", { email, password });
+  return data;
+}
+
+export async function login(email, password) {
+  const { data } = await api.post("/auth/login", { email, password });
+  return data;
+}
+
+export async function logout() {
+  await api.post("/auth/logout");
+}
+
+export async function fetchMe() {
+  const { data } = await api.get("/auth/me");
+  return data;
+}
+
+// --- Server-backed playlists (account mode only - see utils/playlists.js) ---
+
+export async function fetchServerPlaylists() {
+  const { data } = await api.get("/playlists");
+  return data;
+}
+
+export async function createServerPlaylist(name) {
+  const { data } = await api.post("/playlists", { name });
+  return data;
+}
+
+export async function renameServerPlaylist(id, name) {
+  const { data } = await api.patch(`/playlists/${id}`, { name });
+  return data;
+}
+
+export async function deleteServerPlaylist(id) {
+  await api.delete(`/playlists/${id}`);
+}
+
+export async function addTrackToServerPlaylist(id, track) {
+  const { data } = await api.post(`/playlists/${id}/tracks`, { track });
+  return data;
+}
+
+export async function removeTrackFromServerPlaylist(id, videoId) {
+  const { data } = await api.delete(`/playlists/${id}/tracks/${videoId}`);
+  return data;
+}
+
+export async function importServerPlaylists(playlists) {
+  const { data } = await api.post("/playlists/import", { playlists });
+  return data;
+}
+
+// --- Server-backed recently played (account mode only) ---
+
+export async function recordServerPlay(track) {
+  await api.post("/recent", { track });
+}
+
+export async function fetchServerRecentPlays() {
+  const { data } = await api.get("/recent");
   return data;
 }
 

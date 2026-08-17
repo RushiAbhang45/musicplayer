@@ -14,10 +14,41 @@
   border-top: 1px solid var(--glass-border);
 }
 
+.player-bar::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-gradient);
+  background-size: 200% 100%;
+  opacity: 0;
+}
+
+.player-bar.is-playing::before {
+  opacity: 1;
+  animation: gradient-shift 6s linear infinite;
+}
+
 .player-bar__track-info {
-  width: 180px;
+  width: 220px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   overflow: hidden;
+}
+
+.player-bar__track-text {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.player-bar__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .player-bar__title {
@@ -133,7 +164,7 @@ a.player-bar__channel:hover {
     display: none;
   }
   .player-bar__track-info {
-    width: 110px;
+    width: 150px;
   }
 }
 
@@ -143,7 +174,10 @@ a.player-bar__channel:hover {
     gap: 10px;
   }
   .player-bar__track-info {
-    width: 84px;
+    width: 120px;
+  }
+  .eq-bars {
+    display: none;
   }
   .player-bar__controls {
     gap: 8px;

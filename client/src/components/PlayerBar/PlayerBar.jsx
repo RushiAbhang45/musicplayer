@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { usePlayer } from "../../context/PlayerContext.jsx";
 import { isLiked, subscribeToPlaylistChanges, toggleLiked } from "../../utils/playlists.js";
+import AlbumArt from "../AlbumArt/AlbumArt.jsx";
+import EqualizerBars from "../EqualizerBars/EqualizerBars.jsx";
 import ShareButton from "../ShareButton/ShareButton.jsx";
 import "./PlayerBar.css";
 
@@ -46,18 +49,29 @@ export default function PlayerBar() {
   }
 
   return (
-    <div className="player-bar">
+    <div className={`player-bar${isPlaying ? " is-playing" : ""}`}>
       <div className="player-bar__track-info">
         {currentTrack ? (
           <>
-            <div className="player-bar__title">{currentTrack.title}</div>
-            {currentTrack.channelId ? (
-              <Link to={`/artist/${currentTrack.channelId}`} className="player-bar__channel">
-                {currentTrack.channelTitle}
-              </Link>
-            ) : (
-              <div className="player-bar__channel">{currentTrack.channelTitle}</div>
-            )}
+            <AlbumArt
+              thumbnail={currentTrack.thumbnail}
+              title={currentTrack.title}
+              isPlaying={isPlaying}
+              size={48}
+            />
+            <div className="player-bar__track-text">
+              <div className="player-bar__title-row">
+                <div className="player-bar__title">{currentTrack.title}</div>
+                <EqualizerBars isPlaying={isPlaying} />
+              </div>
+              {currentTrack.channelId ? (
+                <Link to={`/artist/${currentTrack.channelId}`} className="player-bar__channel">
+                  {currentTrack.channelTitle}
+                </Link>
+              ) : (
+                <div className="player-bar__channel">{currentTrack.channelTitle}</div>
+              )}
+            </div>
           </>
         ) : (
           <div className="player-bar__idle">Pick a song to start listening</div>
@@ -83,7 +97,17 @@ export default function PlayerBar() {
             disabled={!currentTrack}
             aria-label={isPlaying ? "Pause" : "Play"}
           >
-            {isPlaying ? "❚❚" : "▶"}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={isPlaying ? "pause" : "play"}
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                {isPlaying ? "❚❚" : "▶"}
+              </motion.span>
+            </AnimatePresence>
           </button>
           <button onClick={next} disabled={!currentTrack} aria-label="Next">
             ⏭

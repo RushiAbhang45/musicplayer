@@ -102,6 +102,25 @@ button {
   }
 }
 
+@keyframes equalizer-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
 .yt-player-mount {
   position: fixed;
   left: 14px;

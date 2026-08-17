@@ -1,6 +1,6 @@
 # MusicPlayer
 
-A curated music discovery website: browse "hits" playlists (Sufi & Romance, Love, Dance, Party, DJ/Remix, 90s, Classics, 70s, 80s, Pop & Rap) or search for any song, and play it through an embedded YouTube player with a custom dark, neon-glassmorphism UI. Save favorites to a local "My Library" (stored in your browser).
+A curated music discovery website: browse "hits" playlists (Sufi & Romance, Love, Dance, Party, DJ/Remix, 90s, Classics, 70s, 80s, Pop & Rap), a homepage Trending chart, and your own Recently Played, or search for any song — then play it through an embedded YouTube player with a custom dark, neon-glassmorphism UI and animated player bar. "Up next" during autoplay draws from other songs in the same genre instead of just the same artist. Save favorites to playlists stored locally in your browser, or [sign up](#accounts-optional) to sync them across devices.
 
 ## How playback works (read this first)
 
@@ -82,7 +82,33 @@ This builds the React app into `client/dist` and starts a single Express server 
 | `PORT` | `5000` | Port the Express server listens on. |
 | `CATEGORY_CACHE_TTL_HOURS` | `12` | How often curated category playlists refresh from YouTube. |
 | `SEARCH_CACHE_TTL_MINUTES` | `60` | How long identical search queries are cached. |
+| `TRENDING_REGION` | `IN` | Region code for the homepage "Trending" chart (YouTube `mostPopular`). |
+| `TRENDING_CACHE_TTL_HOURS` | `6` | How often the trending chart refreshes from YouTube. |
 | `CLIENT_ORIGIN` | *(all origins)* | Restrict CORS to your deployed frontend's URL once known. Comma-separate for more than one. |
+| `DATABASE_URL` | — | *Optional.* Postgres connection string. Enables accounts (sign up/log in, playlists that sync across devices). Leave unset to run guest-only, exactly like the app works without it. |
+| `JWT_SECRET` | — | *Optional.* Required alongside `DATABASE_URL` to enable accounts - signs the login session cookie. |
+
+## Accounts (optional)
+
+By default this app needs nothing but a YouTube API key - playlists live in your browser's `localStorage`, no login required. Setting `DATABASE_URL` and `JWT_SECRET` turns on real accounts (sign up/log in, playlists and recently-played that follow you across devices) without changing anything else. Leave them unset and the app runs exactly as it did before - no login UI appears, and `/api/auth`, `/api/playlists`, `/api/recent` all return `503`.
+
+To turn accounts on:
+
+1. Create a free Postgres database - either [Neon](https://neon.tech) or [Supabase](https://supabase.com) work well. Copy the connection string it gives you (it should look like `postgres://user:password@host/dbname?sslmode=require`).
+2. Add it to `server/.env`:
+   ```
+   DATABASE_URL=postgres://...
+   ```
+3. Generate a JWT secret and add it too:
+   ```powershell
+   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+   ```
+   ```
+   JWT_SECRET=<paste the generated value here>
+   ```
+4. Restart the server. On startup it creates the `users`, `playlists`, and `recent_plays` tables automatically (idempotent - safe to restart repeatedly).
+
+If someone has playlists saved locally from before they had an account, logging in for the first time offers to import them.
 
 ## Deploying (frontend on Netlify, backend on Render)
 
@@ -101,7 +127,7 @@ then create a repo on GitHub and push to it.
 
 1. Go to https://render.com, sign in, **New → Web Service**, connect this repo.
 2. Render should auto-detect `render.yaml` (Blueprint) with the right settings. If configuring manually instead: **Build Command** `npm install`, **Start Command** `npm start`.
-3. Add environment variables (Render dashboard → Environment): `YOUTUBE_API_KEY` (required — same key from step 1 above). `PORT` is provided automatically by Render, don't set it.
+3. Add environment variables (Render dashboard → Environment): `YOUTUBE_API_KEY` (required — same key from step 1 above). `PORT` is provided automatically by Render, don't set it. If you've enabled [accounts](#accounts-optional), also add `DATABASE_URL` and `JWT_SECRET` here.
 4. Deploy, then copy the service's URL, e.g. `https://musicplayer-server.onrender.com`.
 
 **Free tier note:** Render's free web services spin down after ~15 minutes idle. The first request after that wakes it back up but can take 30–50 seconds — later requests are fast again. Fine for a personal project; upgrade the plan if you want it always warm.
@@ -114,4 +140,6 @@ then create a repo on GitHub and push to it.
 
 ### 3. Lock down CORS (optional but recommended)
 
-Back in Render's dashboard, set `CLIENT_ORIGIN` to your Netlify URL (e.g. `https://your-site.netlify.app`) so only your deployed frontend can call the API, then redeploy the backend.
+Back in Render's dashboard, set `CLIENT_ORIGIN` to your Netlify URL (e.g. `https://your-site.netlify.app`) so only your deployed frontend can call the API, then redeploy the backend. This matters more once accounts are enabled - `CLIENT_ORIGIN` should be set to your real Netlify URL rather than left as "allow all", since real user login cookies are involved at that point.
+
+If you've enabled [accounts](#accounts-optional), note that Netlify and Render are different origins in production, so the login cookie is set with `SameSite=None; Secure` - this requires your Netlify site to be served over HTTPS (it is, by default), and login should be tested against the actual deployed URLs, not just `localhost`, before considering it done.

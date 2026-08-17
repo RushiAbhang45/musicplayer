@@ -47,6 +47,28 @@
   width: min(340px, 42vw);
 }
 
+.site-header__account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.site-header__account .btn {
+  white-space: nowrap;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.site-header__email {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .site-header {
     flex-wrap: wrap;
@@ -56,5 +78,8 @@
     order: 3;
     width: 100%;
     margin-left: 0;
+  }
+  .site-header__email {
+    display: none;
   }
 }
