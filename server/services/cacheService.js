@@ -12,7 +12,7 @@ const CACHE_DIR = path.join(__dirname, "..", ".cache");
 // read as-is (e.g. category tracks gaining a `categoryId` field) - a
 // mismatched/missing version is discarded rather than reshaped, which costs
 // one clean re-fetch instead of silently serving stale-shaped data forever.
-const DISK_FORMAT_VERSION = 2;
+const DISK_FORMAT_VERSION = 3;
 
 const CATEGORY_TTL_SECONDS =
   (Number(process.env.CATEGORY_CACHE_TTL_HOURS) || 12) * 3600;
@@ -125,7 +125,12 @@ const trendingDisk = makeDiskBackedCache({
 async function fetchCategoryTracks(category) {
   const resultsByVideoId = new Map();
   for (const query of category.queries) {
-    const tracks = await searchVideos(query, { maxResults: 12, musicOnly: true });
+    const tracks = await searchVideos(query, {
+      maxResults: 12,
+      musicOnly: true,
+      regionCode: "IN",
+      relevanceLanguage: "hi",
+    });
     for (const track of tracks) {
       if (!resultsByVideoId.has(track.videoId)) {
         // categoryId is what lets the related-tracks pool sampler (see
@@ -247,7 +252,13 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
 
   let fallbackTracks = relatedCache.get(fallbackKey);
   if (!fallbackTracks) {
-    fallbackTracks = await searchVideos(query, { maxResults: 16, musicOnly: true, channelId });
+    fallbackTracks = await searchVideos(query, {
+      maxResults: 16,
+      musicOnly: true,
+      channelId,
+      regionCode: "IN",
+      relevanceLanguage: "hi",
+    });
     relatedCache.set(fallbackKey, fallbackTracks);
     relatedDisk.persist();
   } else {

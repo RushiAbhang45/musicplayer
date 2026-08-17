@@ -6,6 +6,7 @@ import { isLiked, subscribeToPlaylistChanges, toggleLiked } from "../../utils/pl
 import AlbumArt from "../AlbumArt/AlbumArt.jsx";
 import EqualizerBars from "../EqualizerBars/EqualizerBars.jsx";
 import ShareButton from "../ShareButton/ShareButton.jsx";
+import QueuePanel from "../QueuePanel/QueuePanel.jsx";
 import "./PlayerBar.css";
 
 function formatTime(seconds) {
@@ -30,6 +31,10 @@ export default function PlayerBar() {
     seek,
     setVolume,
     toggleAutoplay,
+    queue,
+    currentIndex,
+    isQueueOpen,
+    toggleQueue,
   } = usePlayer();
 
   const [liked, setLiked] = useState(false);
@@ -149,6 +154,18 @@ export default function PlayerBar() {
         )}
       </div>
 
+      <button
+        className={`icon-btn player-bar__queue-toggle${isQueueOpen ? " active" : ""}`}
+        onClick={toggleQueue}
+        aria-label="Up next queue"
+        title="Up next queue"
+      >
+        ☰
+        {queue.length - currentIndex - 1 > 0 && (
+          <span className="player-bar__queue-count">{queue.length - currentIndex - 1}</span>
+        )}
+      </button>
+
       <div className="player-bar__volume">
         <span aria-hidden="true">🔊</span>
         <input
@@ -160,6 +177,8 @@ export default function PlayerBar() {
           aria-label="Volume"
         />
       </div>
+
+      <QueuePanel />
     </div>
   );
 }

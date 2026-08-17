@@ -126,6 +126,35 @@ export function PlayerProvider({ children }) {
     [loadAt, playerRef]
   );
 
+  const playFromQueue = useCallback(
+    (absoluteIndex) => {
+      const player = playerRef.current;
+      if (!player) return;
+      loadAt(queueRef.current, absoluteIndex);
+      player.playVideo();
+      setIsPlaying(true);
+    },
+    [loadAt, playerRef]
+  );
+
+  // Only the "up next" portion (after the currently-playing track) can be
+  // reordered/removed - already-played history stays put, matching the
+  // Spotify/YouTube Music convention this is modeled on.
+  const reorderQueue = useCallback((newUpcoming) => {
+    setQueue((prev) => {
+      const head = prev.slice(0, indexRef.current + 1);
+      return [...head, ...newUpcoming];
+    });
+  }, []);
+
+  const removeFromQueue = useCallback((absoluteIndex) => {
+    setQueue((prev) => (absoluteIndex <= indexRef.current ? prev : prev.filter((_, i) => i !== absoluteIndex)));
+  }, []);
+
+  const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const toggleQueue = useCallback(() => setIsQueueOpen((v) => !v), []);
+  const closeQueue = useCallback(() => setIsQueueOpen(false), []);
+
   const togglePlay = useCallback(() => {
     const player = playerRef.current;
     if (!player) return;
@@ -244,6 +273,7 @@ export function PlayerProvider({ children }) {
 
   const value = {
     queue,
+    currentIndex,
     currentTrack,
     isPlaying,
     isReady,
@@ -259,6 +289,12 @@ export function PlayerProvider({ children }) {
     seek,
     setVolume: changeVolume,
     toggleAutoplay,
+    isQueueOpen,
+    toggleQueue,
+    closeQueue,
+    reorderQueue,
+    removeFromQueue,
+    playFromQueue,
   };
 
   return (

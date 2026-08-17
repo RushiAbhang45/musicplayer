@@ -56,7 +56,14 @@ function normalizeSearchItem(item) {
 // omits it so any genre or language can be found.
 async function searchVideos(
   query,
-  { maxResults = 12, musicOnly = false, channelId = null, order = null } = {}
+  {
+    maxResults = 12,
+    musicOnly = false,
+    channelId = null,
+    order = null,
+    regionCode = null,
+    relevanceLanguage = null,
+  } = {}
 ) {
   const params = {
     key: getApiKey(),
@@ -70,6 +77,11 @@ async function searchVideos(
   if (musicOnly) params.videoCategoryId = MUSIC_CATEGORY_ID;
   if (channelId) params.channelId = channelId;
   if (order) params.order = order;
+  // Biases curated-category results toward Indian/Hindi content (see
+  // cacheService.js) - free-text user search deliberately omits these so
+  // "search for anything" still means anything.
+  if (regionCode) params.regionCode = regionCode;
+  if (relevanceLanguage) params.relevanceLanguage = relevanceLanguage;
 
   const { data } = await axios.get(`${YOUTUBE_API_BASE}/search`, { params });
   const tracks = (data.items || [])
