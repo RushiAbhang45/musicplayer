@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.onrender.musicplayer_pp3y.twa",
+        "sha256_cert_fingerprints": ["22:F9:A0:CA:B1:6D:A6:57:19:6A:72:37:CE:43:2F:4D:D4:6F:A4:29:48:E4:E3:A4:8B:D8:78:54:D3:01:66:2A"]
+      }
+    }]

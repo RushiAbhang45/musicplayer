@@ -54,7 +54,10 @@ app.use("/api/playlists", playlistsRoute);
 app.use("/api/recent", recentRoute);
 
 const clientDist = path.join(__dirname, "..", "client", "dist");
-app.use(express.static(clientDist));
+// dotfiles default to "ignore" in express.static, which would silently skip
+// /.well-known/assetlinks.json (needed for the Android TWA app-link
+// verification) and fall through to the SPA catch-all's index.html instead.
+app.use(express.static(clientDist, { dotfiles: "allow" }));
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/api/")) return next();
   res.sendFile(path.join(clientDist, "index.html"), (err) => {
