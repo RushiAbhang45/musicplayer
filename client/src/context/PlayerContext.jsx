@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
 import { fetchRelatedTracks, fetchServerPlayerState, recordServerPlay, saveServerPlayerState } from "../services/api.js";
 import { recordPlay } from "../utils/recentlyPlayed.js";
-import { getSavedPlayerState, savePlayerState } from "../utils/playerState.js";
+import { disableServerSync, getSavedPlayerState, isServerSyncEnabled, savePlayerState } from "../utils/playerState.js";
 
 // How often playback position gets persisted while playing - frequent enough
 // that a crash/close doesn't lose much progress, infrequent enough not to
@@ -203,7 +203,17 @@ export function PlayerProvider({ children }) {
       });
       const existingIds = new Set(queueRef.current.map((t) => t.videoId));
       const fresh = related.filter((t) => !existingIds.has(t.videoId));
-      if (fresh.length) setQueue((prev) => [...prev, ...fresh]);
+      if (fresh.length) {
+        // Update the ref eagerly/synchronously, not just via setQueue - a
+        // caller awaiting this function (goNext, the ENDED fallback) reads
+        // queueRef.current right after, and React re-rendering (the only
+        // thing that would otherwise sync it) isn't guaranteed to have
+        // happened yet at that point. This was a real bug: refilling
+        // correctly fetched tracks but goNext still saw the old (too-short)
+        // queue length and silently did nothing.
+        queueRef.current = [...queueRef.current, ...fresh];
+        setQueue(queueRef.current);
+      }
     } catch {
       // no related tracks available - the crossfade trigger / ENDED
       // fallback will simply find no next track and stop, same as before
@@ -253,7 +263,10 @@ export function PlayerProvider({ children }) {
   // Always writes to localStorage (the guest-mode store) AND fire-and-forget
   // attempts the server - same decoupled pattern as recordServerPlay below,
   // so this never needs to know whether the user is actually logged in; a
-  // 401/503 is silently ignored.
+  // 401/503 is silently ignored - but only reported once (isServerSyncEnabled
+  // guards the attempt entirely after that) rather than retried every
+  // PERSIST_INTERVAL_MS for the rest of a guest session, which was spamming
+  // the console with repeated failed requests for exactly nothing.
   const persistState = useCallback(() => {
     const list = queueRef.current;
     if (!list.length || indexRef.current < 0) return;
@@ -265,7 +278,12 @@ export function PlayerProvider({ children }) {
       autoplay: autoplayRef.current,
     };
     savePlayerState(state);
-    saveServerPlayerState(state).catch(() => {});
+    if (isServerSyncEnabled()) {
+      saveServerPlayerState(state).catch((err) => {
+        const status = err?.response?.status;
+        if (status === 401 || status === 503) disableServerSync();
+      });
+    }
   }, []);
 
   const persistStateRef = useRef(persistState);
@@ -318,8 +336,13 @@ export function PlayerProvider({ children }) {
       let saved = null;
       try {
         saved = await fetchServerPlayerState();
-      } catch {
-        // 401 (guest) or 503 (accounts disabled) - expected, fall back below
+      } catch (err) {
+        // 401 (guest) or 503 (accounts disabled) - expected, fall back below.
+        // Also flips off further server-sync attempts this session (see
+        // persistState) so a guest doesn't keep hitting this same wall
+        // every few seconds for the rest of the session.
+        const status = err?.response?.status;
+        if (status === 401 || status === 503) disableServerSync();
       }
       if (!saved?.queue?.length) saved = getSavedPlayerState();
       if (cancelled || !saved?.queue?.length || saved.currentIndex < 0) return;

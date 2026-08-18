@@ -55,7 +55,13 @@ export default function Home() {
           </h2>
           <div className="grid">
             {trending.map((track) => (
-              <TrackCard key={track.videoId} track={track} queue={trending} />
+              // No `queue` here on purpose (see Search.jsx for the same
+              // pattern): trending is a grab-bag across every genre/mood,
+              // not a curated playlist, so cycling through it mechanically
+              // on "Next" would jump from a Bollywood song to a national
+              // anthem to a movie trailer. "Next" should jump straight to
+              // the related-songs radio for genuinely similar tracks instead.
+              <TrackCard key={track.videoId} track={track} />
             ))}
           </div>
         </section>
@@ -68,7 +74,10 @@ export default function Home() {
           </h2>
           <div className="grid">
             {recent.map((track) => (
-              <TrackCard key={track.videoId} track={track} queue={recent} />
+              // Same reasoning as trending above - recently played spans
+              // whatever moods you were in on past visits, not a single
+              // coherent listening session to walk through in order.
+              <TrackCard key={track.videoId} track={track} />
             ))}
           </div>
         </section>
