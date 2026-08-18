@@ -111,6 +111,15 @@ export async function fetchServerRecentPlays() {
   return data;
 }
 
+export async function fetchServerPlayerState() {
+  const { data } = await api.get("/player-state");
+  return data;
+}
+
+export async function saveServerPlayerState(state) {
+  await api.put("/player-state", state);
+}
+
 export async function fetchArtistInfo(channelId) {
   const { data } = await api.get(`/artists/${channelId}`);
   return data;

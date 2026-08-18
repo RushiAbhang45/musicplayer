@@ -63,6 +63,18 @@ async function runMigrations() {
       ON recent_plays(user_id, played_at DESC);
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS player_state (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      queue JSONB NOT NULL DEFAULT '[]',
+      current_index INTEGER NOT NULL DEFAULT -1,
+      position_seconds NUMERIC NOT NULL DEFAULT 0,
+      volume INTEGER NOT NULL DEFAULT 80,
+      autoplay BOOLEAN NOT NULL DEFAULT true,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
   console.log("[startup] database migrations up to date - accounts enabled");
 }
 

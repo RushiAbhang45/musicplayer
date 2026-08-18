@@ -14,6 +14,7 @@ const trendingRoute = require("./routes/trending");
 const authRoute = require("./routes/auth");
 const playlistsRoute = require("./routes/playlists");
 const recentRoute = require("./routes/recent");
+const playerStateRoute = require("./routes/playerState");
 const { startScheduledRefresh } = require("./services/cacheService");
 const { runMigrations } = require("./db");
 
@@ -52,6 +53,7 @@ app.use("/api/trending", trendingRoute);
 app.use("/api/auth", authRoute);
 app.use("/api/playlists", playlistsRoute);
 app.use("/api/recent", recentRoute);
+app.use("/api/player-state", playerStateRoute);
 
 const clientDist = path.join(__dirname, "..", "client", "dist");
 // dotfiles default to "ignore" in express.static, which would silently skip

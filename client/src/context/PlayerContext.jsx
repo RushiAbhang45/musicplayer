@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useYouTubePlayer } from "../hooks/useYouTubePlayer";
-import { fetchRelatedTracks, recordServerPlay } from "../services/api.js";
+import { fetchRelatedTracks, fetchServerPlayerState, recordServerPlay, saveServerPlayerState } from "../services/api.js";
 import { recordPlay } from "../utils/recentlyPlayed.js";
+import { getSavedPlayerState, savePlayerState } from "../utils/playerState.js";
+
+// How often playback position gets persisted while playing - frequent enough
+// that a crash/close doesn't lose much progress, infrequent enough not to
+// hammer localStorage/the DB on every 500ms UI tick.
+const PERSIST_INTERVAL_MS = 5000;
 
 const PlayerContext = createContext(null);
 const YT_PLAYER_CONTAINER_ID = "yt-player-mount";
@@ -22,9 +28,14 @@ export function PlayerProvider({ children }) {
   const indexRef = useRef(-1);
   const autoplayRef = useRef(autoplay);
   const wakeLockRef = useRef(null);
+  const currentTimeRef = useRef(0);
+  const volumeRef = useRef(volume);
+  const hasRestoredRef = useRef(false);
   queueRef.current = queue;
   indexRef.current = currentIndex;
   autoplayRef.current = autoplay;
+  currentTimeRef.current = currentTime;
+  volumeRef.current = volume;
 
   const loadAt = useCallback((list, index) => {
     const track = list[index];
@@ -73,6 +84,29 @@ export function PlayerProvider({ children }) {
     if (idx > 0) loadAt(list, idx - 1);
   }, [loadAt]);
 
+  // Persists queue/track/position/volume/autoplay so a refresh (or a new
+  // device, once logged in) can pick up exactly where playback left off.
+  // Always writes to localStorage (the guest-mode store) AND fire-and-forget
+  // attempts the server - same decoupled pattern as recordServerPlay below,
+  // so this never needs to know whether the user is actually logged in; a
+  // 401/503 is silently ignored.
+  const persistState = useCallback(() => {
+    const list = queueRef.current;
+    if (!list.length || indexRef.current < 0) return;
+    const state = {
+      queue: list,
+      currentIndex: indexRef.current,
+      currentTime: currentTimeRef.current,
+      volume: volumeRef.current,
+      autoplay: autoplayRef.current,
+    };
+    savePlayerState(state);
+    saveServerPlayerState(state).catch(() => {});
+  }, []);
+
+  const persistStateRef = useRef(persistState);
+  persistStateRef.current = persistState;
+
   const handleStateChange = useCallback(
     (event) => {
       const YT = window.YT;
@@ -82,9 +116,15 @@ export function PlayerProvider({ children }) {
         setDuration(event.target.getDuration() || 0);
       } else if (event.data === YT.PlayerState.PAUSED) {
         setIsPlaying(false);
+        persistStateRef.current();
       } else if (event.data === YT.PlayerState.ENDED) {
         setIsPlaying(false);
         goNext();
+      } else if (event.data === YT.PlayerState.CUED) {
+        // Fires after a restored track is cued (see the restore-on-mount
+        // effect below) - picks up its duration so the progress bar isn't
+        // stuck at 0 before the user hits Play for the first time.
+        setDuration(event.target.getDuration() || 0);
       }
     },
     [goNext]
@@ -98,6 +138,76 @@ export function PlayerProvider({ children }) {
     if (isReady) playerRef.current?.setVolume(volume);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady]);
+
+  // Restores queue/track/position across a refresh, once the player exists
+  // (guaranteed by gating on isReady). Server state wins when available
+  // (logged in), falling back to the localStorage guest-mode copy. Cues the
+  // restored track paused rather than resuming playback automatically -
+  // unmuted autoplay without a fresh user gesture is unreliable/blocked in
+  // most browsers anyway, and starting audio the instant the page loads
+  // would be jarring even when it isn't blocked.
+  useEffect(() => {
+    if (!isReady || hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
+    let cancelled = false;
+
+    async function restore() {
+      let saved = null;
+      try {
+        saved = await fetchServerPlayerState();
+      } catch {
+        // 401 (guest) or 503 (accounts disabled) - expected, fall back below
+      }
+      if (!saved?.queue?.length) saved = getSavedPlayerState();
+      if (cancelled || !saved?.queue?.length || saved.currentIndex < 0) return;
+
+      const track = saved.queue[saved.currentIndex];
+      if (!track) return;
+
+      setQueue(saved.queue);
+      setCurrentIndex(saved.currentIndex);
+      setVolume(saved.volume ?? 80);
+      setAutoplay(saved.autoplay !== false);
+      setCurrentTime(saved.currentTime || 0);
+      playerRef.current?.cueVideoById(track.videoId, saved.currentTime || 0);
+      playerRef.current?.setVolume(saved.volume ?? 80);
+    }
+
+    restore();
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, playerRef]);
+
+  // Track-change is the clearest signal a listening session actually moved
+  // forward, so it persists immediately rather than waiting for the next
+  // interval tick. Guarded by persistState's own `indexRef.current < 0`
+  // check, so this is a no-op on first mount before anything's playing (and
+  // right after the restore effect above, it's a harmless re-save of what
+  // was just restored).
+  useEffect(() => {
+    persistStateRef.current();
+  }, [currentIndex]);
+
+  useEffect(() => {
+    if (!isPlaying) return undefined;
+    const id = setInterval(() => persistStateRef.current(), PERSIST_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isPlaying]);
+
+  // Catches the "closed the tab" / "switched apps" case that the interval
+  // above might miss between ticks.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") persistStateRef.current();
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("beforeunload", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) return undefined;
