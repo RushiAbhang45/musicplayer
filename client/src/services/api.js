@@ -26,10 +26,11 @@ export async function searchTracks(query, limit) {
   return data;
 }
 
-export async function fetchRelatedTracks(videoId, { categoryId, excludeIds } = {}) {
+export async function fetchRelatedTracks(videoId, { categoryId, channelId, excludeIds } = {}) {
   const { data } = await api.get(`/related/${videoId}`, {
     params: {
       categoryId: categoryId || undefined,
+      channelId: channelId || undefined,
       exclude: excludeIds?.length ? excludeIds.join(",") : undefined,
     },
   });

@@ -53,6 +53,7 @@ export function PlayerProvider({ children }) {
     try {
       const related = await fetchRelatedTracks(current.videoId, {
         categoryId: current.categoryId,
+        channelId: current.channelId,
         excludeIds: list.map((t) => t.videoId),
       });
       const existingIds = new Set(list.map((t) => t.videoId));

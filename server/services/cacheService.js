@@ -203,7 +203,7 @@ async function getSearchResults(query) {
 // approach that both (a) spent 100 units on every single queue refill and
 // (b) only ever surfaced the one artist. A live search only happens when
 // the local pool is too thin to be worth serving.
-async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } = {}) {
+async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [], channelId = null } = {}) {
   const excludeSet = new Set([videoId, ...excludeIds]);
 
   const pool = samplePool({
@@ -212,6 +212,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
     artistTracksCache,
     trendingCache,
     categoryId,
+    channelId,
     excludeIds: excludeSet,
     limit: RELATED_RESULT_COUNT,
   });
@@ -229,7 +230,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
 
   let fallbackKey;
   let query = null;
-  let channelId = null;
+  let fallbackChannelId = null;
 
   if (category) {
     // Broadened genre/mood query instead of a specific artist - reusable
@@ -246,7 +247,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
       query = `${artist} songs`;
     } else {
       fallbackKey = `channel:${video.channelId}`;
-      channelId = video.channelId;
+      fallbackChannelId = video.channelId;
     }
   }
 
@@ -255,7 +256,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [] } 
     fallbackTracks = await searchVideos(query, {
       maxResults: 16,
       musicOnly: true,
-      channelId,
+      channelId: fallbackChannelId,
       regionCode: "IN",
       relevanceLanguage: "hi",
     });
