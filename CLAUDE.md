@@ -61,7 +61,7 @@ Fully gated by `DATABASE_URL` being set (`server/db/index.js`'s `isDbConfigured(
 
 `client/src/components/QueuePanel/QueuePanel.jsx` is a slide-in drawer (toggled from a button in `PlayerBar.jsx`) showing the current track + upcoming queue, drag-to-reorder via framer-motion's `Reorder` (no extra dependency).
 
-`client/src/context/AuthContext.jsx` (optional accounts, parallel to `PlayerContext`, not cross-imported by it) tracks `user`/`accountsEnabled` via `GET /api/auth/me` on mount — a `503` means the deployment has no `DATABASE_URL` and all login UI stays hidden; a `401` means guest-with-accounts-available, showing a Log in link in `Header.jsx`.
+`client/src/context/AuthContext.jsx` (optional accounts, parallel to `PlayerContext`, not cross-imported by it) tracks `user`/`accountsEnabled` via `GET /api/auth/me` on mount — a `503` means the deployment has no `DATABASE_URL` and all login UI stays hidden; a `401` means guest-with-accounts-available, showing a Log in link in `Header.jsx`. On successful login/signup it also checks `localStorage` for pre-existing guest playlists (`hasImportableLocalData`/`hasBeenPromptedForImport` in `utils/playlists.js`) and, once per browser, surfaces `ImportPlaylistsPrompt.jsx` to offer merging them into the new account via `importLocalPlaylistsToAccount` — declining never deletes the local copy, it's just left behind as an orphaned backup.
 
 `client/src/services/api.js` is a thin axios wrapper around the `/api/*` routes (`withCredentials: true` for the auth cookie); `baseURL` comes from `VITE_API_BASE_URL` when set (split deployment) or defaults to the Vite dev proxy.
 
