@@ -9,10 +9,24 @@ import { getSavedPlayerState, savePlayerState } from "../utils/playerState.js";
 // hammer localStorage/the DB on every 500ms UI tick.
 const PERSIST_INTERVAL_MS = 5000;
 
-const PlayerContext = createContext(null);
-const YT_PLAYER_CONTAINER_ID = "yt-player-mount";
+// Crossfade tuning. Two hidden players take turns being "active" (audible)
+// vs "standby" (silently preloading the next track) - see beginTransition
+// below for the handoff mechanics. Auto (natural end-of-track) gets a full
+// musical crossfade; manual actions (Next/Previous/queue-jump) get a quick
+// fade instead of an instant cut, so nothing ever hard-clicks.
+const CROSSFADE_TRIGGER_SECONDS = 5;
+const CROSSFADE_DURATION_AUTO_MS = 4000;
+const CROSSFADE_DURATION_MANUAL_MS = 1000;
+const CROSSFADE_TICK_MS = 50;
+// Proactively refetch related tracks well before the crossfade trigger, so
+// a next track already exists in the queue by the time it's needed instead
+// of racing a network call against the fade window.
+const REFILL_TRIGGER_SECONDS = 20;
 
-// Mounted once, above the router, so the single YT.Player instance is never
+const PlayerContext = createContext(null);
+const PLAYER_CONTAINER_IDS = ["yt-player-mount-a", "yt-player-mount-b"];
+
+// Mounted once, above the router, so the two YT.Player instances are never
 // torn down on navigation - that's what makes playback survive page changes.
 export function PlayerProvider({ children }) {
   const [queue, setQueue] = useState([]);
@@ -31,35 +45,155 @@ export function PlayerProvider({ children }) {
   const currentTimeRef = useRef(0);
   const volumeRef = useRef(volume);
   const hasRestoredRef = useRef(false);
+  const isFetchingRelatedRef = useRef(false);
   queueRef.current = queue;
   indexRef.current = currentIndex;
   autoplayRef.current = autoplay;
   currentTimeRef.current = currentTime;
   volumeRef.current = volume;
 
-  const loadAt = useCallback((list, index) => {
-    const track = list[index];
-    const player = playerRef.current;
-    if (!track || !player) return;
-    setQueue(list);
-    setCurrentIndex(index);
-    setCurrentTime(0);
-    player.loadVideoById(track.videoId);
+  // activeSlot (0 or 1) tracks which of the two players is currently
+  // audible. Mirrored into both a ref (read inside callbacks/intervals,
+  // where a stale closure over React state would be wrong) and state
+  // (purely so the little corner video preview - see the render below -
+  // can show the right iframe; nothing else needs it to re-render).
+  const [activeSlot, setActiveSlot] = useState(0);
+  const activeSlotRef = useRef(0);
+  const isTransitioningRef = useRef(false);
+  const rampIntervalRef = useRef(null);
+
+  const handleStateChange = useCallback((slot, event) => {
+    const YT = window.YT;
+    if (!YT || slot !== activeSlotRef.current) return;
+    if (event.data === YT.PlayerState.PLAYING) {
+      setIsPlaying(true);
+      setDuration(event.target.getDuration() || 0);
+    } else if (event.data === YT.PlayerState.PAUSED) {
+      setIsPlaying(false);
+      persistStateRef.current();
+    } else if (event.data === YT.PlayerState.ENDED) {
+      setIsPlaying(false);
+      // Under normal operation the crossfade trigger (below) pauses the
+      // active player a moment before it would naturally end, so this
+      // branch is a fallback for when that timer got missed (e.g. a
+      // backgrounded tab throttles setInterval) rather than the common path.
+      if (!isTransitioningRef.current) {
+        endedFallbackRef.current();
+      }
+    } else if (event.data === YT.PlayerState.CUED) {
+      // Fires after a restored track is cued (see the restore-on-mount
+      // effect below) - picks up its duration so the progress bar isn't
+      // stuck at 0 before the user hits Play for the first time.
+      setDuration(event.target.getDuration() || 0);
+    }
   }, []);
 
-  const goNext = useCallback(async () => {
-    const list = queueRef.current;
-    const idx = indexRef.current;
+  const playerA = useYouTubePlayer(PLAYER_CONTAINER_IDS[0], {
+    onStateChange: (event) => handleStateChange(0, event),
+  });
+  const playerB = useYouTubePlayer(PLAYER_CONTAINER_IDS[1], {
+    onStateChange: (event) => handleStateChange(1, event),
+  });
+  const playerARef = playerA.playerRef;
+  const playerBRef = playerB.playerRef;
+  const isReady = playerA.isReady && playerB.isReady;
+  // A player's ref is non-null the instant `new YT.Player()` is called, but
+  // its API methods (setVolume, loadVideoById, ...) aren't actually attached
+  // until the iframe handshake completes and onReady fires - a truthy
+  // `.current` check alone isn't enough to safely call methods on it, so
+  // playTrack/beginTransition below also check this (mirrored into a ref
+  // since they're stable useCallbacks and can't close over the `isReady`
+  // state directly without going stale).
+  const isReadyRef = useRef(false);
+  isReadyRef.current = isReady;
 
-    if (idx + 1 < list.length) {
-      loadAt(list, idx + 1);
-      return;
+  const refForSlot = useCallback((slot) => (slot === 0 ? playerARef : playerBRef), [playerARef, playerBRef]);
+
+  // Cleanly aborts an in-flight crossfade: stops the ramp, silences and
+  // pauses whichever player was fading in, and restores the active
+  // player's volume in case it was mid-fade-out. Used when a seek or a new
+  // transition interrupts one already in progress.
+  const cancelTransition = useCallback(() => {
+    if (rampIntervalRef.current) {
+      clearInterval(rampIntervalRef.current);
+      rampIntervalRef.current = null;
     }
+    if (isTransitioningRef.current) {
+      const standby = refForSlot(1 - activeSlotRef.current).current;
+      standby?.pauseVideo();
+      standby?.setVolume(volumeRef.current);
+      refForSlot(activeSlotRef.current).current?.setVolume(volumeRef.current);
+    }
+    isTransitioningRef.current = false;
+  }, [refForSlot]);
 
-    if (!autoplayRef.current) return;
-    const current = list[idx];
+  // The handoff: preload `targetIndex` on the standby player (silently),
+  // start it, then ramp volume from the active player over to it. Used for
+  // every track change - manual Next/Previous/queue-jump get a quick fade
+  // (durationMs = CROSSFADE_DURATION_MANUAL_MS) instead of today's instant
+  // cut, natural end-of-track gets the full musical crossfade. Returns
+  // false (no-op) if there's no such track or a player isn't ready yet.
+  const beginTransition = useCallback(
+    (targetIndex, durationMs) => {
+      const track = queueRef.current[targetIndex];
+      const activePlayer = refForSlot(activeSlotRef.current).current;
+      const standbyPlayer = refForSlot(1 - activeSlotRef.current).current;
+      if (!track || !activePlayer || !standbyPlayer || !isReadyRef.current) return false;
+
+      cancelTransition();
+      isTransitioningRef.current = true;
+
+      standbyPlayer.setVolume(0);
+      standbyPlayer.loadVideoById(track.videoId);
+
+      // Reflect the new "now playing" track the moment the fade starts,
+      // not once it finishes - matches how crossfade-capable players
+      // switch title/artwork immediately.
+      setCurrentIndex(targetIndex);
+      setCurrentTime(0);
+
+      const steps = Math.max(1, Math.round(durationMs / CROSSFADE_TICK_MS));
+      let step = 0;
+      rampIntervalRef.current = setInterval(() => {
+        step++;
+        const progress = Math.min(1, step / steps);
+        const ceiling = volumeRef.current; // read live so a mid-fade volume drag is respected
+        activePlayer.setVolume(Math.round(ceiling * (1 - progress)));
+        standbyPlayer.setVolume(Math.round(ceiling * progress));
+
+        if (progress >= 1) {
+          clearInterval(rampIntervalRef.current);
+          rampIntervalRef.current = null;
+          activePlayer.pauseVideo();
+          activePlayer.setVolume(ceiling); // reset for its next turn as standby
+          activeSlotRef.current = 1 - activeSlotRef.current;
+          setActiveSlot(activeSlotRef.current);
+          isTransitioningRef.current = false;
+          // The now-active player was already playing before the flip (no
+          // new PLAYING event fires), so duration/isPlaying need setting
+          // explicitly rather than relying on handleStateChange.
+          setDuration(standbyPlayer.getDuration() || 0);
+          setIsPlaying(true);
+        }
+      }, CROSSFADE_TICK_MS);
+
+      return true;
+    },
+    [cancelTransition, refForSlot]
+  );
+
+  // Extracted from the old goNext so both the manual Next button and the
+  // proactive auto-crossfade trigger (below) can call it: fetches more
+  // tracks from the local relatedPool/live-search fallback (see CLAUDE.md)
+  // and appends them to the queue. A no-op while a fetch is already in
+  // flight.
+  const refillQueue = useCallback(async () => {
+    if (isFetchingRelatedRef.current) return;
+    const list = queueRef.current;
+    const current = list[indexRef.current];
     if (!current) return;
 
+    isFetchingRelatedRef.current = true;
     setIsFetchingRelated(true);
     try {
       const related = await fetchRelatedTracks(current.videoId, {
@@ -67,22 +201,52 @@ export function PlayerProvider({ children }) {
         channelId: current.channelId,
         excludeIds: list.map((t) => t.videoId),
       });
-      const existingIds = new Set(list.map((t) => t.videoId));
+      const existingIds = new Set(queueRef.current.map((t) => t.videoId));
       const fresh = related.filter((t) => !existingIds.has(t.videoId));
-      if (fresh.length === 0) return;
-      loadAt([...list, ...fresh], idx + 1);
+      if (fresh.length) setQueue((prev) => [...prev, ...fresh]);
     } catch {
-      // no related tracks available - just stop, nothing more to play
+      // no related tracks available - the crossfade trigger / ENDED
+      // fallback will simply find no next track and stop, same as before
     } finally {
+      isFetchingRelatedRef.current = false;
       setIsFetchingRelated(false);
     }
-  }, [loadAt]);
+  }, []);
+
+  const goNext = useCallback(async () => {
+    const idx = indexRef.current;
+    if (idx + 1 < queueRef.current.length) {
+      beginTransition(idx + 1, CROSSFADE_DURATION_MANUAL_MS);
+      return;
+    }
+    if (!autoplayRef.current) return;
+    await refillQueue();
+    if (indexRef.current + 1 < queueRef.current.length) {
+      beginTransition(indexRef.current + 1, CROSSFADE_DURATION_MANUAL_MS);
+    }
+  }, [beginTransition, refillQueue]);
 
   const goPrev = useCallback(() => {
-    const list = queueRef.current;
     const idx = indexRef.current;
-    if (idx > 0) loadAt(list, idx - 1);
-  }, [loadAt]);
+    if (idx > 0) beginTransition(idx - 1, CROSSFADE_DURATION_MANUAL_MS);
+  }, [beginTransition]);
+
+  // ENDED fallback (see handleStateChange) - kept behind a ref so
+  // handleStateChange doesn't need goNext-shaped deps churning it on every
+  // render; mirrors the seekRef/persistStateRef pattern already used below.
+  const endedFallbackRef = useRef(() => {});
+  endedFallbackRef.current = () => {
+    const idx = indexRef.current;
+    if (idx + 1 < queueRef.current.length) {
+      beginTransition(idx + 1, 0);
+    } else if (autoplayRef.current) {
+      refillQueue().then(() => {
+        if (indexRef.current + 1 < queueRef.current.length) {
+          beginTransition(indexRef.current + 1, 0);
+        }
+      });
+    }
+  };
 
   // Persists queue/track/position/volume/autoplay so a refresh (or a new
   // device, once logged in) can pick up exactly where playback left off.
@@ -107,39 +271,38 @@ export function PlayerProvider({ children }) {
   const persistStateRef = useRef(persistState);
   persistStateRef.current = persistState;
 
-  const handleStateChange = useCallback(
-    (event) => {
-      const YT = window.YT;
-      if (!YT) return;
-      if (event.data === YT.PlayerState.PLAYING) {
-        setIsPlaying(true);
-        setDuration(event.target.getDuration() || 0);
-      } else if (event.data === YT.PlayerState.PAUSED) {
-        setIsPlaying(false);
-        persistStateRef.current();
-      } else if (event.data === YT.PlayerState.ENDED) {
-        setIsPlaying(false);
-        goNext();
-      } else if (event.data === YT.PlayerState.CUED) {
-        // Fires after a restored track is cued (see the restore-on-mount
-        // effect below) - picks up its duration so the progress bar isn't
-        // stuck at 0 before the user hits Play for the first time.
-        setDuration(event.target.getDuration() || 0);
-      }
-    },
-    [goNext]
-  );
-
-  const { playerRef, isReady } = useYouTubePlayer(YT_PLAYER_CONTAINER_ID, {
-    onStateChange: handleStateChange,
-  });
-
   useEffect(() => {
-    if (isReady) playerRef.current?.setVolume(volume);
+    if (isReady) {
+      playerARef.current?.setVolume(volume);
+      playerBRef.current?.setVolume(volume);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady]);
 
-  // Restores queue/track/position across a refresh, once the player exists
+  // Watches playback position while playing: proactively refills the queue
+  // well before it runs out (REFILL_TRIGGER_SECONDS), then starts the
+  // musical crossfade once CROSSFADE_TRIGGER_SECONDS remain and a next
+  // track is available. Runs every 500ms off the position-tracking
+  // interval further below.
+  useEffect(() => {
+    if (!isPlaying || isTransitioningRef.current || duration <= 0) return;
+    const remaining = duration - currentTime;
+
+    if (
+      indexRef.current + 1 >= queueRef.current.length &&
+      autoplayRef.current &&
+      remaining <= REFILL_TRIGGER_SECONDS &&
+      !isFetchingRelatedRef.current
+    ) {
+      refillQueue();
+    }
+
+    if (remaining <= CROSSFADE_TRIGGER_SECONDS && indexRef.current + 1 < queueRef.current.length) {
+      beginTransition(indexRef.current + 1, CROSSFADE_DURATION_AUTO_MS);
+    }
+  }, [currentTime, duration, isPlaying, beginTransition, refillQueue]);
+
+  // Restores queue/track/position across a refresh, once both players exist
   // (guaranteed by gating on isReady). Server state wins when available
   // (logged in), falling back to the localStorage guest-mode copy. Cues the
   // restored track paused rather than resuming playback automatically -
@@ -169,15 +332,16 @@ export function PlayerProvider({ children }) {
       setVolume(saved.volume ?? 80);
       setAutoplay(saved.autoplay !== false);
       setCurrentTime(saved.currentTime || 0);
-      playerRef.current?.cueVideoById(track.videoId, saved.currentTime || 0);
-      playerRef.current?.setVolume(saved.volume ?? 80);
+      const activePlayer = refForSlot(activeSlotRef.current).current;
+      activePlayer?.cueVideoById(track.videoId, saved.currentTime || 0);
+      activePlayer?.setVolume(saved.volume ?? 80);
     }
 
     restore();
     return () => {
       cancelled = true;
     };
-  }, [isReady, playerRef]);
+  }, [isReady, refForSlot]);
 
   // Track-change is the clearest signal a listening session actually moved
   // forward, so it persists immediately rather than waiting for the next
@@ -212,20 +376,35 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!isPlaying) return undefined;
     const id = setInterval(() => {
-      const player = playerRef.current;
+      // Skip while a crossfade is in flight - the active slot hasn't
+      // flipped yet, so reading its currentTime here would clobber the
+      // fresh 0 that beginTransition just set with the outgoing track's
+      // near-the-end position.
+      if (isTransitioningRef.current) return;
+      const player = refForSlot(activeSlotRef.current).current;
       if (player?.getCurrentTime) setCurrentTime(player.getCurrentTime());
     }, 500);
     return () => clearInterval(id);
-  }, [isPlaying, playerRef]);
+  }, [isPlaying, refForSlot]);
 
   const playTrack = useCallback(
     (track, list) => {
-      const player = playerRef.current;
-      if (!player) return;
+      const activePlayer = refForSlot(activeSlotRef.current).current;
+      if (!activePlayer || !isReadyRef.current) return;
+      // Starting a fresh listening session (clicked a track elsewhere in
+      // the app) isn't "advancing" an existing one, so this is an instant
+      // cut, not a crossfade - also clears out any fade left mid-flight
+      // from whatever was playing before.
+      cancelTransition();
       const effectiveList = list && list.length ? list : [track];
       const index = effectiveList.findIndex((t) => t.videoId === track.videoId);
-      loadAt(effectiveList, index === -1 ? 0 : index);
-      player.playVideo();
+      const targetIndex = index === -1 ? 0 : index;
+
+      setQueue(effectiveList);
+      setCurrentIndex(targetIndex);
+      setCurrentTime(0);
+      activePlayer.setVolume(volumeRef.current);
+      activePlayer.loadVideoById(effectiveList[targetIndex].videoId);
       setIsPlaying(true);
       recordPlay(track);
       // Fire-and-forget: a 401 (guest) or 503 (accounts disabled on this
@@ -234,18 +413,14 @@ export function PlayerProvider({ children }) {
       // depending on provider ordering.
       recordServerPlay(track).catch(() => {});
     },
-    [loadAt, playerRef]
+    [cancelTransition, refForSlot]
   );
 
   const playFromQueue = useCallback(
     (absoluteIndex) => {
-      const player = playerRef.current;
-      if (!player) return;
-      loadAt(queueRef.current, absoluteIndex);
-      player.playVideo();
-      setIsPlaying(true);
+      beginTransition(absoluteIndex, CROSSFADE_DURATION_MANUAL_MS);
     },
-    [loadAt, playerRef]
+    [beginTransition]
   );
 
   // Only the "up next" portion (after the currently-playing track) can be
@@ -267,21 +442,25 @@ export function PlayerProvider({ children }) {
   const closeQueue = useCallback(() => setIsQueueOpen(false), []);
 
   const togglePlay = useCallback(() => {
-    const player = playerRef.current;
+    const player = refForSlot(activeSlotRef.current).current;
     if (!player) return;
     if (isPlaying) {
       player.pauseVideo();
     } else {
       player.playVideo();
     }
-  }, [playerRef, isPlaying]);
+  }, [refForSlot, isPlaying]);
 
   const seek = useCallback(
     (seconds) => {
-      playerRef.current?.seekTo(seconds, true);
+      // Jumping around mid-fade would be confusing (which player is the
+      // scrub bar even pointing at?) - cancel it and let the seek apply
+      // cleanly to the active player.
+      cancelTransition();
+      refForSlot(activeSlotRef.current).current?.seekTo(seconds, true);
       setCurrentTime(seconds);
     },
-    [playerRef]
+    [cancelTransition, refForSlot]
   );
 
   const seekRef = useRef(seek);
@@ -290,9 +469,14 @@ export function PlayerProvider({ children }) {
   const changeVolume = useCallback(
     (value) => {
       setVolume(value);
-      playerRef.current?.setVolume(value);
+      // During a crossfade the ramp interval reads volumeRef.current live
+      // every tick, so it picks this up on its own - setting it directly
+      // here too would just be fought over and overwritten within 50ms.
+      if (!isTransitioningRef.current) {
+        refForSlot(activeSlotRef.current).current?.setVolume(value);
+      }
     },
-    [playerRef]
+    [refForSlot]
   );
 
   const toggleAutoplay = useCallback(() => setAutoplay((v) => !v), []);
@@ -306,8 +490,8 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!("mediaSession" in navigator)) return undefined;
 
-    navigator.mediaSession.setActionHandler("play", () => playerRef.current?.playVideo());
-    navigator.mediaSession.setActionHandler("pause", () => playerRef.current?.pauseVideo());
+    navigator.mediaSession.setActionHandler("play", () => refForSlot(activeSlotRef.current).current?.playVideo());
+    navigator.mediaSession.setActionHandler("pause", () => refForSlot(activeSlotRef.current).current?.pauseVideo());
     navigator.mediaSession.setActionHandler("previoustrack", () => goPrev());
     navigator.mediaSession.setActionHandler("nexttrack", () => goNext());
     navigator.mediaSession.setActionHandler("seekto", (details) => {
@@ -321,7 +505,7 @@ export function PlayerProvider({ children }) {
       navigator.mediaSession.setActionHandler("nexttrack", null);
       navigator.mediaSession.setActionHandler("seekto", null);
     };
-  }, [playerRef, goPrev, goNext]);
+  }, [refForSlot, goPrev, goNext]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -412,7 +596,22 @@ export function PlayerProvider({ children }) {
     <PlayerContext.Provider value={value}>
       {children}
       <div className="yt-player-mount" aria-hidden="true">
-        <div id={YT_PLAYER_CONTAINER_ID} />
+        {/* Both players stay mounted permanently (destroying either div would
+            tear down its YT.Player) - only the currently-active one is shown,
+            since the standby is often silently preloading/paused mid-track
+            and would otherwise flash the wrong video into this corner box.
+            The is-active class lives on a wrapper React fully owns, NOT on
+            the inner id={...} div directly - the YouTube IFrame API replaces
+            that div with an iframe at construction time (copying its class
+            once), so React's virtual DOM loses track of it afterwards and
+            any className toggled there later would silently never reach
+            the real, live iframe. */}
+        <div className={`yt-player-slot${activeSlot === 0 ? " is-active" : ""}`}>
+          <div id={PLAYER_CONTAINER_IDS[0]} />
+        </div>
+        <div className={`yt-player-slot${activeSlot === 1 ? " is-active" : ""}`}>
+          <div id={PLAYER_CONTAINER_IDS[1]} />
+        </div>
       </div>
     </PlayerContext.Provider>
   );

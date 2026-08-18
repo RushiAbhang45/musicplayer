@@ -133,6 +133,21 @@ button {
   box-shadow: 0 0 0 1px var(--glass-border);
 }
 
+/* Two YT.Player instances take turns being audible (crossfade handoff -
+   see PlayerContext.jsx); both stay mounted, only the active one is shown
+   so this corner preview never flashes the silently-preloading track. */
+.yt-player-slot {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+.yt-player-slot.is-active {
+  opacity: 1;
+}
+
 @media (max-width: 640px) {
   .app-main {
     padding-left: 14px;
