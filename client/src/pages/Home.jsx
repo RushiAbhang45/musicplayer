@@ -1,28 +1,30 @@
 import { useEffect, useState } from "react";
-import { fetchCategories, fetchServerRecentPlays, fetchTrending } from "../services/api.js";
+import { fetchPopularArtists, fetchServerRecentPlays, fetchTrending } from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getRecentlyPlayed } from "../utils/recentlyPlayed.js";
-import CategoryGrid from "../components/CategoryGrid/CategoryGrid.jsx";
+import HeroBanner from "../components/HeroBanner/HeroBanner.jsx";
+import HorizontalShelf from "../components/HorizontalShelf/HorizontalShelf.jsx";
+import ArtistAvatarRow from "../components/ArtistAvatarRow/ArtistAvatarRow.jsx";
 import TrackCard from "../components/TrackCard/TrackCard.jsx";
 
 export default function Home() {
   const { user } = useAuth();
-  const [categories, setCategories] = useState([]);
-  const [status, setStatus] = useState("loading");
   const [trending, setTrending] = useState([]);
+  const [trendingStatus, setTrendingStatus] = useState("loading");
   const [recent, setRecent] = useState([]);
+  const [artists, setArtists] = useState([]);
 
   useEffect(() => {
-    fetchCategories()
-      .then((data) => {
-        setCategories(data);
-        setStatus("ready");
-      })
-      .catch(() => setStatus("error"));
-
     fetchTrending()
-      .then(setTrending)
-      .catch(() => setTrending([]));
+      .then((data) => {
+        setTrending(data);
+        setTrendingStatus("ready");
+      })
+      .catch(() => setTrendingStatus("error"));
+
+    fetchPopularArtists()
+      .then(setArtists)
+      .catch(() => setArtists([]));
   }, []);
 
   useEffect(() => {
@@ -38,58 +40,49 @@ export default function Home() {
     }
   }, [user]);
 
+  const [heroTrack, ...restTrending] = trending;
+
   return (
     <div>
-      <section style={{ marginBottom: 36 }}>
-        <h1 className="page-heading gradient-text">Every hit, one place.</h1>
-        <p style={{ color: "var(--text-muted)", marginTop: 8 }}>
-          Sufi &amp; romance, party anthems, throwback decades, and whatever else you can find on
-          YouTube — pick a playlist or search for anything.
+      {trendingStatus === "loading" && <p className="status-text">Loading...</p>}
+      {trendingStatus === "error" && (
+        <p className="status-text">
+          Couldn't load music. Make sure the server is running and YOUTUBE_API_KEY is set.
         </p>
-      </section>
+      )}
 
-      {trending.length > 0 && (
-        <section style={{ marginBottom: 36 }}>
-          <h2 className="page-heading" style={{ fontSize: 20, marginBottom: 14 }}>
-            Trending in India
-          </h2>
-          <div className="grid">
-            {trending.map((track) => (
-              // No `queue` here on purpose (see Search.jsx for the same
-              // pattern): trending is a grab-bag across every genre/mood,
-              // not a curated playlist, so cycling through it mechanically
-              // on "Next" would jump from a Bollywood song to a national
-              // anthem to a movie trailer. "Next" should jump straight to
-              // the related-songs radio for genuinely similar tracks instead.
-              <TrackCard key={track.videoId} track={track} />
-            ))}
-          </div>
-        </section>
+      {heroTrack && <HeroBanner track={heroTrack} />}
+
+      {restTrending.length > 0 && (
+        // No `queue` on the TrackCards below on purpose (see Search.jsx for
+        // the same pattern): trending is a grab-bag across every genre/mood,
+        // not a curated playlist, so cycling through it mechanically on
+        // "Next" would jump from a Bollywood song to a national anthem to a
+        // movie trailer. "Next" should jump straight to the related-songs
+        // radio for genuinely similar tracks instead.
+        <HorizontalShelf title="Trending in India">
+          {restTrending.map((track) => (
+            <div className="shelf__item" key={track.videoId}>
+              <TrackCard track={track} />
+            </div>
+          ))}
+        </HorizontalShelf>
       )}
 
       {recent.length > 0 && (
-        <section style={{ marginBottom: 36 }}>
-          <h2 className="page-heading" style={{ fontSize: 20, marginBottom: 14 }}>
-            Recently Played
-          </h2>
-          <div className="grid">
-            {recent.map((track) => (
-              // Same reasoning as trending above - recently played spans
-              // whatever moods you were in on past visits, not a single
-              // coherent listening session to walk through in order.
-              <TrackCard key={track.videoId} track={track} />
-            ))}
-          </div>
-        </section>
+        <HorizontalShelf title="Recently Played">
+          {recent.map((track) => (
+            // Same reasoning as trending above - recently played spans
+            // whatever moods you were in on past visits, not a single
+            // coherent listening session to walk through in order.
+            <div className="shelf__item" key={track.videoId}>
+              <TrackCard track={track} />
+            </div>
+          ))}
+        </HorizontalShelf>
       )}
 
-      {status === "loading" && <p className="status-text">Loading playlists...</p>}
-      {status === "error" && (
-        <p className="status-text">
-          Couldn't load playlists. Make sure the server is running and YOUTUBE_API_KEY is set.
-        </p>
-      )}
-      {status === "ready" && <CategoryGrid categories={categories} />}
+      <ArtistAvatarRow artists={artists} />
     </div>
   );
 }

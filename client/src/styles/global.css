@@ -50,6 +50,13 @@ button {
 .app-shell {
   min-height: 100vh;
   display: flex;
+  flex-direction: row;
+}
+
+.app-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
 }
 
@@ -59,6 +66,12 @@ button {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px clamp(16px, 4vw, 40px) calc(var(--player-bar-height) + 32px);
+}
+
+@media (max-width: 959px) {
+  .app-main {
+    padding-bottom: calc(var(--player-bar-height) + var(--bottom-nav-height) + 24px);
+  }
 }
 
 .page-heading {
@@ -133,6 +146,15 @@ button {
   box-shadow: 0 0 0 1px var(--glass-border);
 }
 
+/* This box is a sibling of PlayerBar (rendered directly by PlayerProvider),
+   not a descendant - it does NOT move automatically when PlayerBar's own
+   position changes below, so both breakpoints need to be repeated here. */
+@media (min-width: 960px) {
+  .yt-player-mount {
+    left: calc(var(--sidebar-width) + 14px);
+  }
+}
+
 /* Two YT.Player instances take turns being audible (crossfade handoff -
    see PlayerContext.jsx); both stay mounted, only the active one is shown
    so this corner preview never flashes the silently-preloading track. */
@@ -148,6 +170,12 @@ button {
   opacity: 1;
 }
 
+@media (max-width: 959px) {
+  .yt-player-mount {
+    bottom: calc(var(--bottom-nav-height) + 12px);
+  }
+}
+
 @media (max-width: 640px) {
   .app-main {
     padding-left: 14px;
@@ -156,7 +184,7 @@ button {
 
   .yt-player-mount {
     left: 8px;
-    bottom: 8px;
+    bottom: calc(var(--bottom-nav-height) + 8px);
     width: 52px;
     height: 36px;
     border-radius: 8px;

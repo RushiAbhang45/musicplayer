@@ -1,8 +1,21 @@
 const express = require("express");
-const { getArtistTracks, getArtistInfo } = require("../services/cacheService");
+const { getArtistTracks, getArtistInfo, getPopularArtists } = require("../services/cacheService");
 const { sendApiError } = require("../utils/apiError");
 
 const router = express.Router();
+
+// GET /api/artists/popular - homepage "Popular Artists" row. Must be
+// registered before /:channelId below, or Express would match "popular" as
+// a channelId param and this route would never be reached.
+router.get("/popular", async (req, res) => {
+  try {
+    const artists = await getPopularArtists();
+    res.json(artists);
+  } catch (err) {
+    console.error("GET /api/artists/popular failed:", err.message);
+    sendApiError(res, err, "Failed to load popular artists");
+  }
+});
 
 // GET /api/artists/:channelId - channel display info (name/thumbnail).
 router.get("/:channelId", async (req, res) => {

@@ -24,6 +24,8 @@
   --radius-lg: 20px;
 
   --player-bar-height: 84px;
+  --sidebar-width: 240px;
+  --bottom-nav-height: 64px;
 }
 
 .glass-card {
@@ -91,4 +93,10 @@
 .icon-btn.active {
   color: var(--accent-pink);
   border-color: var(--accent-pink);
+}
+
+.artist-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 0 0 3px var(--glass-border);
 }

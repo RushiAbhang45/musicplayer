@@ -26,11 +26,16 @@ export async function searchTracks(query, limit) {
   return data;
 }
 
-export async function fetchRelatedTracks(videoId, { categoryId, channelId, excludeIds } = {}) {
+export async function fetchRelatedTracks(
+  videoId,
+  { categoryId, channelId, title, channelTitle, excludeIds } = {}
+) {
   const { data } = await api.get(`/related/${videoId}`, {
     params: {
       categoryId: categoryId || undefined,
       channelId: channelId || undefined,
+      title: title || undefined,
+      channelTitle: channelTitle || undefined,
       exclude: excludeIds?.length ? excludeIds.join(",") : undefined,
     },
   });
@@ -127,6 +132,11 @@ export async function fetchArtistInfo(channelId) {
 
 export async function fetchArtistTracks(channelId) {
   const { data } = await api.get(`/artists/${channelId}/tracks`);
+  return data;
+}
+
+export async function fetchPopularArtists() {
+  const { data } = await api.get("/artists/popular");
   return data;
 }
 

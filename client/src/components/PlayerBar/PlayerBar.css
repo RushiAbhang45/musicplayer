@@ -180,6 +180,18 @@ a.player-bar__channel:hover {
   accent-color: var(--accent-cyan);
 }
 
+@media (min-width: 960px) {
+  .player-bar {
+    left: var(--sidebar-width);
+  }
+}
+
+@media (max-width: 959px) {
+  .player-bar {
+    bottom: var(--bottom-nav-height);
+  }
+}
+
 @media (max-width: 800px) {
   .player-bar {
     padding-right: 12px;

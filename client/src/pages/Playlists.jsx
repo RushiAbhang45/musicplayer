@@ -5,16 +5,29 @@ import {
   isPlaylistsLoading,
   subscribeToPlaylistChanges,
 } from "../utils/playlists.js";
+import { fetchCategories } from "../services/api.js";
 import PlaylistCard from "../components/PlaylistCard/PlaylistCard.jsx";
+import CategoryGrid from "../components/CategoryGrid/CategoryGrid.jsx";
 
 export default function Playlists() {
   const [playlists, setPlaylists] = useState(() => getPlaylists());
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [categories, setCategories] = useState([]);
+  const [categoriesStatus, setCategoriesStatus] = useState("loading");
 
   useEffect(() => {
     setPlaylists(getPlaylists());
     return subscribeToPlaylistChanges(() => setPlaylists(getPlaylists()));
+  }, []);
+
+  useEffect(() => {
+    fetchCategories()
+      .then((data) => {
+        setCategories(data);
+        setCategoriesStatus("ready");
+      })
+      .catch(() => setCategoriesStatus("error"));
   }, []);
 
   function handleCreate(e) {
@@ -76,6 +89,15 @@ export default function Playlists() {
           ))}
         </div>
       )}
+
+      <h2 className="page-heading" style={{ fontSize: 20, margin: "36px 0 14px" }}>
+        Browse Playlists
+      </h2>
+      {categoriesStatus === "loading" && <p className="status-text">Loading playlists...</p>}
+      {categoriesStatus === "error" && (
+        <p className="status-text">Couldn't load playlists right now.</p>
+      )}
+      {categoriesStatus === "ready" && <CategoryGrid categories={categories} />}
     </div>
   );
 }

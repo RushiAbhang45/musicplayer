@@ -1,0 +1,26 @@
+.artist-avatar-row__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.artist-avatar-row__item .artist-avatar {
+  width: 96px;
+  height: 96px;
+  transition: box-shadow 0.2s ease;
+}
+
+.artist-avatar-row__item:hover .artist-avatar {
+  box-shadow: 0 0 0 3px var(--accent-purple);
+}
+
+.artist-avatar-row__name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

@@ -199,6 +199,8 @@ export function PlayerProvider({ children }) {
       const related = await fetchRelatedTracks(current.videoId, {
         categoryId: current.categoryId,
         channelId: current.channelId,
+        title: current.title,
+        channelTitle: current.channelTitle,
         excludeIds: list.map((t) => t.videoId),
       });
       const existingIds = new Set(queueRef.current.map((t) => t.videoId));

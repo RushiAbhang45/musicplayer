@@ -3,7 +3,7 @@ const path = require("path");
 const NodeCache = require("node-cache");
 const categories = require("../config/categories");
 const { searchVideos, getVideoDetails, getTrackById, getChannelInfo, getTrendingVideos } = require("./youtubeService");
-const { deriveArtist } = require("../utils/deriveArtist");
+const { deriveArtist, isSameSong } = require("../utils/deriveArtist");
 const { samplePool, POOL_MIN_UNSEEN, RELATED_RESULT_COUNT } = require("./relatedPool");
 
 const CACHE_DIR = path.join(__dirname, "..", ".cache");
@@ -44,6 +44,10 @@ const trackInfoCache = new NodeCache({ stdTTL: CATEGORY_TTL_SECONDS, maxKeys: 50
 
 // Trending chart: same long-ish TTL story as categories, disk-backed.
 const trendingCache = new NodeCache({ stdTTL: TRENDING_TTL_SECONDS });
+
+// Aggregated "Popular Artists" list for the homepage - same long TTL as
+// categories since it's derived from them (see getPopularArtists below).
+const popularArtistsCache = new NodeCache({ stdTTL: CATEGORY_TTL_SECONDS });
 
 // Generic disk snapshot for a node-cache instance, keyed by whatever keys
 // happen to be in the cache (category id, search query, channelId, etc).
@@ -121,6 +125,11 @@ const trendingDisk = makeDiskBackedCache({
   cache: trendingCache,
   ttlSeconds: TRENDING_TTL_SECONDS,
 });
+const popularArtistsDisk = makeDiskBackedCache({
+  file: path.join(CACHE_DIR, "popular-artists.json"),
+  cache: popularArtistsCache,
+  ttlSeconds: CATEGORY_TTL_SECONDS,
+});
 
 async function fetchCategoryTracks(category) {
   const resultsByVideoId = new Map();
@@ -129,7 +138,7 @@ async function fetchCategoryTracks(category) {
       maxResults: 12,
       musicOnly: true,
       regionCode: "IN",
-      relevanceLanguage: "hi",
+      relevanceLanguage: category.relevanceLanguage || "hi",
     });
     for (const track of tracks) {
       if (!resultsByVideoId.has(track.videoId)) {
@@ -203,27 +212,39 @@ async function getSearchResults(query) {
 // approach that both (a) spent 100 units on every single queue refill and
 // (b) only ever surfaced the one artist. A live search only happens when
 // the local pool is too thin to be worth serving.
-async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [], channelId = null } = {}) {
+async function getRelatedTracks(
+  videoId,
+  { categoryId = null, excludeIds = [], channelId = null, sourceTitle = null, sourceChannelTitle = null } = {}
+) {
   const excludeSet = new Set([videoId, ...excludeIds]);
 
-  const pool = samplePool({
+  const { tracks: pool, relevantCount } = samplePool({
     categoryCache,
     relatedCache,
     artistTracksCache,
     trendingCache,
     categoryId,
     channelId,
+    sourceTitle,
+    sourceChannelTitle,
     excludeIds: excludeSet,
     limit: RELATED_RESULT_COUNT,
   });
 
-  if (pool.length >= POOL_MIN_UNSEEN) {
+  // Judge "is this pool good enough" on relevantCount (genre/artist matches
+  // only), not pool.length - a categoryId-less pool spans every cached
+  // category, so pool.length alone is nearly always >= POOL_MIN_UNSEEN even
+  // when almost none of it actually relates to the source track. That was
+  // silently serving a near-random cross-genre shuffle for search/trending/
+  // recently-played-originated tracks (none of which carry a categoryId)
+  // instead of ever reaching the artist-targeted live search below.
+  if (relevantCount >= POOL_MIN_UNSEEN) {
     console.log(`[related] served ${pool.length} tracks from local pool for "${videoId}" (0 quota)`);
     return pool;
   }
 
   console.log(
-    `[related] local pool too thin (${pool.length}/${POOL_MIN_UNSEEN}) for "${videoId}" - falling back to a live search`
+    `[related] local pool too thin (${relevantCount}/${POOL_MIN_UNSEEN} relevant) for "${videoId}" - falling back to a live search`
   );
 
   const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
@@ -238,16 +259,27 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [], c
     fallbackKey = `category:${category.id}`;
     query = category.queries[0];
   } else {
-    const video = await getVideoDetails(videoId);
-    if (!video) return pool;
+    // Prefer the source title/channelTitle the caller already sent (see
+    // PlayerContext.refillQueue) over an extra getVideoDetails call - only
+    // spend that quota unit when a caller genuinely didn't have them.
+    let title = sourceTitle;
+    let titleChannelTitle = sourceChannelTitle;
+    let titleChannelId = channelId;
+    if (!title) {
+      const video = await getVideoDetails(videoId);
+      if (!video) return pool;
+      title = video.title;
+      titleChannelTitle = video.channelTitle;
+      titleChannelId = video.channelId;
+    }
 
-    const { artist, confident } = deriveArtist(video.title, video.channelTitle);
+    const { artist, confident } = deriveArtist(title, titleChannelTitle);
     if (confident && artist) {
       fallbackKey = `artist:${artist.toLowerCase()}`;
       query = `${artist} songs`;
     } else {
-      fallbackKey = `channel:${video.channelId}`;
-      fallbackChannelId = video.channelId;
+      fallbackKey = `channel:${titleChannelId}`;
+      fallbackChannelId = titleChannelId;
     }
   }
 
@@ -258,7 +290,7 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [], c
       musicOnly: true,
       channelId: fallbackChannelId,
       regionCode: "IN",
-      relevanceLanguage: "hi",
+      relevanceLanguage: (category && category.relevanceLanguage) || "hi",
     });
     relatedCache.set(fallbackKey, fallbackTracks);
     relatedDisk.persist();
@@ -266,13 +298,34 @@ async function getRelatedTracks(videoId, { categoryId = null, excludeIds = [], c
     console.log(`[related] fallback cache hit for "${fallbackKey}"`);
   }
 
-  const merged = pool.slice();
-  const seen = new Set(merged.map((t) => t.videoId));
+  // A live search for "<artist> songs" can itself return a different upload
+  // of the very song the caller just played (same reasoning as samplePool's
+  // isSameSong check) - filter those out here too.
+  const dedupArtistKey = sourceTitle
+    ? deriveArtist(sourceTitle, sourceChannelTitle).artist.trim().toLowerCase()
+    : null;
+
+  // Fallback tracks go FIRST, pool tracks only backfill remaining slots -
+  // not the other way around. The pool was already judged "not relevant
+  // enough" (that's why we're here at all) but samplePool still pads its
+  // return value up to RELATED_RESULT_COUNT with lower-tier filler so it's
+  // never empty; putting that padded-out pool first used to mean the
+  // targeted, actually-relevant fallback search results got pushed to the
+  // very end and almost entirely cut off by the RELATED_RESULT_COUNT cap.
+  const merged = [];
+  const seen = new Set();
   for (const track of fallbackTracks) {
     if (excludeSet.has(track.videoId) || seen.has(track.videoId)) continue;
+    if (sourceTitle && isSameSong(sourceTitle, track.title, dedupArtistKey)) continue;
     merged.push(track);
     seen.add(track.videoId);
     if (merged.length >= RELATED_RESULT_COUNT) break;
+  }
+  for (const track of pool) {
+    if (merged.length >= RELATED_RESULT_COUNT) break;
+    if (excludeSet.has(track.videoId) || seen.has(track.videoId)) continue;
+    merged.push(track);
+    seen.add(track.videoId);
   }
 
   return merged;
@@ -320,6 +373,51 @@ async function getArtistInfo(channelId) {
   return info;
 }
 
+const POPULAR_ARTISTS_COUNT = 14;
+
+// Homepage "Popular Artists" row. Costs zero search quota - tallies
+// channelId frequency across tracks the server already paid for (every
+// cached category + trending), same "sample what's already warm" philosophy
+// as relatedPool.js's samplePool. Only the top ~14 channels then each cost 1
+// quota unit (getArtistInfo/channels.list) to resolve an avatar, and that
+// per-channel lookup is itself already cached/disk-backed above, so a
+// channel that's popular across multiple categories is only ever resolved
+// once. Lazy like getCategoryTracks - computed on first request, not on boot.
+async function getPopularArtists() {
+  const cached = popularArtistsCache.get("popular");
+  if (cached) {
+    console.log("[cache] hit for popular artists");
+    return cached;
+  }
+
+  console.log("[cache] miss for popular artists - aggregating from cached tracks");
+  const tally = new Map(); // channelId -> play count across cached tracks
+  const categoryKeys = categoryCache.keys();
+  const categoryTrackLists = categoryCache.mget(categoryKeys);
+  const trendingTracks = trendingCache.get("trending") || [];
+  const allTracks = [...Object.values(categoryTrackLists).flat(), ...trendingTracks];
+
+  for (const track of allTracks) {
+    if (!track.channelId) continue;
+    tally.set(track.channelId, (tally.get(track.channelId) || 0) + 1);
+  }
+
+  const topChannelIds = Array.from(tally.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, POPULAR_ARTISTS_COUNT)
+    .map(([channelId]) => channelId);
+
+  const artists = [];
+  for (const channelId of topChannelIds) {
+    const info = await getArtistInfo(channelId);
+    if (info) artists.push(info);
+  }
+
+  popularArtistsCache.set("popular", artists);
+  popularArtistsDisk.persist();
+  return artists;
+}
+
 // YouTube's mostPopular chart - 1 quota unit regardless of result count,
 // vs. 100 for a search.list call. Long-ish TTL, disk-backed like categories.
 async function getTrending() {
@@ -351,6 +449,7 @@ function startScheduledRefresh() {
   artistTracksDisk.load();
   artistInfoDisk.load();
   trendingDisk.load();
+  popularArtistsDisk.load();
   setInterval(refreshAllCategories, CATEGORY_TTL_SECONDS * 1000);
 }
 
@@ -360,6 +459,7 @@ module.exports = {
   getRelatedTracks,
   getArtistTracks,
   getArtistInfo,
+  getPopularArtists,
   getTrackInfo,
   getTrending,
   startScheduledRefresh,

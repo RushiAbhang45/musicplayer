@@ -8,15 +8,28 @@ const router = express.Router();
 // playback (autoplay/radio) once a queue runs out. Optional ?categoryId=
 // scopes the pool to that genre; ?exclude=id1,id2 skips tracks already in
 // the caller's current queue so a session doesn't loop back over itself;
-// ?channelId= is the source track's artist, used to rank same-artist
-// candidates higher (capped, see relatedPool.SAME_ARTIST_CAP) without
-// letting them crowd out cross-artist variety.
+// ?channelId= is the source track's uploading channel, used to rank
+// same-channel candidates higher (capped, see relatedPool.SAME_ARTIST_CAP)
+// without letting them crowd out cross-artist variety. ?title=/?channelTitle=
+// are the source track's own title/channel name - passed through so the pool
+// can also match by the *derived* singer/composer credit (via deriveArtist),
+// not just the uploading channel, since most Bollywood/Punjabi content is
+// uploaded by label channels (T-Series, Zee Music, Speed Records, ...) where
+// channelId reflects the label, not who's actually singing.
 router.get("/:videoId", async (req, res) => {
   try {
     const categoryId = req.query.categoryId || null;
     const channelId = req.query.channelId || null;
+    const sourceTitle = req.query.title || null;
+    const sourceChannelTitle = req.query.channelTitle || null;
     const excludeIds = (req.query.exclude || "").split(",").filter(Boolean);
-    const tracks = await getRelatedTracks(req.params.videoId, { categoryId, excludeIds, channelId });
+    const tracks = await getRelatedTracks(req.params.videoId, {
+      categoryId,
+      excludeIds,
+      channelId,
+      sourceTitle,
+      sourceChannelTitle,
+    });
     res.json(tracks);
   } catch (err) {
     console.error("GET /api/related/:videoId failed:", err.message);

@@ -146,6 +146,12 @@
   font-size: 13px;
 }
 
+@media (max-width: 959px) {
+  .queue-panel {
+    bottom: calc(var(--player-bar-height) + var(--bottom-nav-height));
+  }
+}
+
 @media (max-width: 640px) {
   .queue-panel {
     width: 100vw;

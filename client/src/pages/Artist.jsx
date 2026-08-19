@@ -49,13 +49,8 @@ export default function Artist() {
           <img
             src={artist.thumbnail}
             alt={artist.title}
-            style={{
-              width: 96,
-              height: 96,
-              borderRadius: "50%",
-              objectFit: "cover",
-              boxShadow: "0 0 0 3px var(--glass-border)",
-            }}
+            className="artist-avatar"
+            style={{ width: 96, height: 96 }}
           />
         )}
         <div>
